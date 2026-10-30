@@ -1,0 +1,84 @@
+name: Build DMG
+
+# Two jobs so the write token never meets repository code: `dmg` runs the build scripts with a
+# read-only token, and `release` (tags only) runs no repository code, only attests the image and
+# attaches it. Actions are pinned to commit SHAs (see .github/dependabot.yml).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dmg:
+    name: Build and package Code-o-ween.app
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(sed -n 's/^VERSION="\([^"]*\)"$/\1/p' code-o-ween)"
+          [[ "${GITHUB_REF_NAME#v}" == "$version" ]] || {
+            echo "Tag $GITHUB_REF_NAME does not match VERSION=$version in code-o-ween" >&2
+            exit 1
+          }
+
+      - name: Build the DMG
+        env:
+          # One app for Apple Silicon and Intel Macs.
+          CODE_O_WEEN_BUILD_ARCHS: arm64 x86_64
+          CODE_O_WEEN_DIST_DIR: ${{ github.workspace }}/dist
+          # Optional: import a Developer ID certificate into a temporary keychain in an earlier
+          # step and set CODE_O_WEEN_CODESIGN_IDENTITY to its name. Without it the app is
+          # ad-hoc signed, and users open it once with right-click → Open.
+        run: ./build-dmg.sh
+
+      - name: Upload the DMG as a workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Code-o-ween-dmg
+          path: |
+            dist/*.dmg
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Attest and attach to the GitHub release
+    needs: dmg
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: Code-o-ween-dmg
+          path: dist
+
+      # Lets users check where an image came from: gh attestation verify FILE --repo OWNER/REPO.
+      # The .sha256 next to it only detects corruption, since it is hosted in the same place.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.dmg
+
+      # No --clobber: an image that people may already have downloaded is never replaced.
+      # Publishing a fix means a new tag.
+      - name: Attach the DMG to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --title "Code-o-ween ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.sha256
