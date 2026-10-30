@@ -102,7 +102,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 .menubar ul { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 2px; }
 .menubar li { padding: 0 8px; line-height: var(--menubar-h); white-space: nowrap; }
-.menubar-logo { font-size: 15px; padding-right: 4px; }
+.menubar-logo { font-size: 15px; padding-right: 4px; display: inline-flex; align-items: center; }
+/* The app icon wherever the brand shows: sized to the surrounding text. */
+.brand-icon { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -0.2em; border-radius: 22%; }
 .menubar-app { font-weight: 700; }
 .menubar-item { opacity: 0.92; }
 .menubar-right { gap: 6px; }
