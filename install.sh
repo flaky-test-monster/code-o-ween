@@ -58,7 +58,7 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   printf '  export PATH=%q:"$PATH"\n' "$BIN_DIR"
 fi
 printf '\nTry:\n  code-o-ween create Cauldron --color orange --emoji "🎃" --extensions isolated\n'
-printf '  code-o-ween create Personal --app chrome --color purple --emoji "👻"\n'
+printf '  code-o-ween create Nightly --app vscode-insiders --color purple --emoji "👻"\n'
 printf '  code-o-ween apps\n'
 
 if [[ "$(uname -s)" == "Darwin" ]] && command -v xcrun >/dev/null && xcrun --find swiftc >/dev/null 2>&1; then

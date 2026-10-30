@@ -2,6 +2,9 @@
 # Shared helpers for the test scripts. Source it after `set -euo pipefail`.
 
 package_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Generated launchers show their refusals as alerts for Finder launches; a test must not wait
+# for someone to click one.
+export CODE_O_WEEN_NO_ALERT=1
 # Used by the scripts that source this file.
 # shellcheck disable=SC2034
 cli="$package_dir/code-o-ween"

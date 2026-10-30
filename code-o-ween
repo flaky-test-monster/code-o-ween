@@ -552,17 +552,29 @@ sign_disguise() {
 # Settings folder ownership
 # ---------------------------------------------------------------------------------------------
 
-# Prints PATH with symlinks and "." or ".." resolved in its deepest existing ancestor, so a
-# folder that does not exist yet still compares by where it would really be created.
+# Prints PATH with symlinks resolved in its deepest existing ancestor and "." and ".." collapsed
+# in the rest, so a folder that does not exist yet still compares by where it would really be
+# created. The filesystem cannot resolve the missing part, and left as spelled, "<missing>/.."
+# would name the parent while looking like something inside it. The root prints as nothing.
 physical_path() {
-  local path="${1%/}" rest="" resolved
+  local path="${1%/}" rest="" resolved segment
+  local -a segments=() kept=()
   while [[ -n "$path" && ! -d "$path" ]]; do
     rest="/${path##*/}$rest"
     path="${path%/*}"
   done
   resolved="$(cd -P "${path:-/}" 2>/dev/null && pwd)" || resolved="$path"
   [[ "$resolved" != / ]] || resolved=""
-  printf '%s%s' "$resolved" "$rest"
+  IFS=/ read -r -a segments <<<"$resolved$rest"
+  for segment in ${segments[@]+"${segments[@]}"}; do
+    case "$segment" in
+      ""|.) ;;
+      ..) [[ ${#kept[@]} -eq 0 ]] || unset "kept[$((${#kept[@]} - 1))]" ;;
+      *) kept+=("$segment") ;;
+    esac
+  done
+  [[ ${#kept[@]} -gt 0 ]] || return 0
+  printf '/%s' "${kept[@]}"
 }
 
 # The home folder and its ancestors are never a settings folder, however the path is spelled:
@@ -1307,14 +1319,18 @@ EOF
 # profile swapped for a link to someone else's folder cannot be used by a launch), and recreate
 # a missing folder with its marker and update.mode pinned, so a recovered profile cannot update
 # the clone before the next refresh. An existing folder is never claimed.
-# Launched from Finder there is no terminal, so refusals also show an alert.
+# Launched from Finder there is no terminal, so refusals also show an alert, unless stderr is a
+# terminal or CODE_O_WEEN_NO_ALERT is set (the tests set it).
 profile_guard_lines() {
   local slug="$1" quoted_slug
   printf -v quoted_slug '%q' "$slug"
   cat <<EOF
 refuse() {
   echo "Code-o-ween: \$1" >&2
-  /usr/bin/osascript -e "display alert \"Code-o-ween\" message \"\$1\"" >/dev/null 2>&1 || true
+  # Launched from Finder there is no terminal to read that, so it is shown as an alert too.
+  if [[ ! -t 2 && -z "\${CODE_O_WEEN_NO_ALERT:-}" ]]; then
+    /usr/bin/osascript -e "display alert \"Code-o-ween\" message \"\$1\"" >/dev/null 2>&1 || true
+  fi
   exit 1
 }
 if [[ -L "\$profile_root" ]]; then refuse "the settings folder \$profile_root is a symbolic link; refusing to start"; fi

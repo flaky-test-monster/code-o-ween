@@ -181,6 +181,17 @@ expect_fail assert_safe_profile_location "$test_root/home-link/.."          # an
 expect_fail assert_safe_profile_location "$HOME/./.code-o-ween/.."           # the home folder, spelled around
 assert_safe_profile_location "$test_root/home-link/not-yet-created/demo"     # inside home is fine
 [[ "$(physical_path "$test_root/home-link/new/deeper")" == "$(cd -P "$HOME" && pwd)/new/deeper" ]] || fail "physical_path through a symlink"
+# "." and ".." in the part that does not exist yet are collapsed, so "<missing>/.." cannot name
+# the home folder while looking like something inside it; and the root prints as nothing.
+[[ "$(physical_path "$test_root/missing/./a/../b")" == "$(cd -P "$test_root" && pwd)/missing/b" ]] || fail "physical_path lexical normalization"
+[[ -z "$(physical_path "$test_root/../../../../../../..")" ]] || fail "physical_path above the root"
+(
+  HOME="$test_root/home-without-data-root"; mkdir -p "$HOME"
+  expect_fail assert_safe_profile_location "$HOME/.code-o-ween/.."
+  expect_fail assert_safe_profile_location "$HOME/./.code-o-ween/.."
+  expect_fail assert_safe_profile_location "$HOME/.code-o-ween/../.."
+  assert_safe_profile_location "$HOME/.code-o-ween/demo"
+)
 # An unmarked folder is never adopted, even one that looks like a settings folder in the default root.
 (
   HOME="$test_root/fakehome"

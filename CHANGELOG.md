@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- The home-folder guard also refused `~/.code-o-ween/..` only when `~/.code-o-ween` existed;
+  paths whose last part does not exist yet are now normalized before the check. No command
+  could build such a path, so no data was at risk, but the guard is meant to hold on its own.
+- Launchers no longer show a refusal as an alert when run from a terminal, or when
+  `CODE_O_WEEN_NO_ALERT` is set, which the tests do.
+- `install.sh` no longer suggests a recipe that does not exist.
+
 ## 0.1.0: first release
 
 Code-o-ween disguises VS Code and other Mac apps: each disguise is a separate copy of the app
