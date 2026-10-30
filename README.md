@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Code-o-ween 🎃
+# Code-o-ween
 
 Disguise VS Code and other Mac apps for trick or treat.
 
