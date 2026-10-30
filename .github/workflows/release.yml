@@ -14,7 +14,7 @@ permissions:
 jobs:
   dmg:
     name: Build and package Code-o-ween.app
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
