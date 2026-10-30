@@ -622,4 +622,22 @@
   // The markup ships the browser open so the page reads without script; hide it to open it properly.
   browser.hidden = true;
   showWindow(browser);
+
+  // The download button links to a fixed release in the markup, which keeps working without
+  // script or network. When GitHub answers, it is pointed at the newest release's disk image.
+  // The repository is read from that link, so the page carries its address in one place.
+  const download = $("#download");
+  const downloadMeta = $("#download-meta");
+  if (download && "fetch" in window) {
+    const [owner, repo] = new URL(download.href).pathname.split("/").slice(1, 3);
+    fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.statusText))))
+      .then((release) => {
+        const asset = (release.assets || []).find((item) => item.name.endsWith(".dmg"));
+        if (!asset) return;
+        download.href = asset.browser_download_url;
+        if (downloadMeta) downloadMeta.textContent = `${release.tag_name} · ${(asset.size / 1048576).toFixed(1)} MB`;
+      })
+      .catch(() => {});
+  }
 })();
