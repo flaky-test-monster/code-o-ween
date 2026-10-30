@@ -152,8 +152,8 @@ code-o-ween gui
 ```
 
 The disk image on the [Releases](https://github.com/flaky-test-monster/code-o-ween/releases) page holds
-the app alone, with the command bundled inside it. It is signed ad hoc, so macOS asks you to
-open it once with right-click → Open. Building the app requires macOS 13 or newer; the command
+the app alone, with the command bundled inside it. It is signed with a Developer ID and
+notarized, so it opens like any other download. Building the app requires macOS 13 or newer; the command
 works without it.
 
 ## What can be disguised
@@ -368,18 +368,21 @@ CODE_O_WEEN_BUILD_ARCHS="arm64 x86_64" ./build-dmg.sh   # one app for Apple Sili
 The app is built into a staging folder, so `~/Applications/Code-o-ween.app` is left alone. The
 image holds the app and an Applications shortcut, and a `.sha256` file is written next to it.
 Set `CODE_O_WEEN_CODESIGN_IDENTITY` to a Developer ID name to sign the app and the image with
-it; otherwise both stay ad-hoc signed and macOS asks once to open the app with right-click →
-Open. Notarization is left to the release manager (`xcrun notarytool`, see the script).
-
-The same steps run in GitHub Actions (`.github/workflows/release.yml`): on every `v*` tag the
-image is built on a macOS runner, checked against the `VERSION` in `code-o-ween`, and attached
-to the GitHub release; a manual run only uploads it as a workflow artifact. A release image is
-never replaced once attached, and it carries a build provenance attestation, so a download can
-be checked against this repository's workflow:
+it; otherwise both stay ad-hoc signed, and macOS refuses a downloaded copy until it is allowed
+under System Settings → Privacy & Security. Notarizing and stapling the signed image is done by
+hand (`xcrun notarytool submit`, then `xcrun stapler staple`; regenerate the `.sha256` after
+stapling), and the release is created from it:
 
 ```bash
-gh attestation verify Code-o-ween-0.1.0.dmg --repo flaky-test-monster/code-o-ween
+gh release create v0.1.0 dist/Code-o-ween-0.1.0.dmg dist/Code-o-ween-0.1.0.dmg.sha256 --title "Code-o-ween 0.1.0"
 ```
+
+The same build runs in GitHub Actions (`.github/workflows/release.yml`): on every `v*` tag the
+image is built on a macOS runner and checked against the `VERSION` in `code-o-ween`. When the
+release already carries an image attached by hand, the workflow leaves it alone; otherwise it
+attaches its own, unsigned one with a build provenance attestation that can be checked with
+`gh attestation verify FILE --repo flaky-test-monster/code-o-ween`. A manual run only uploads
+the image as a workflow artifact. A release image is never replaced once attached.
 
 The `.sha256` file only detects a damaged download; it is hosted next to the image and proves
 nothing about where the image came from.

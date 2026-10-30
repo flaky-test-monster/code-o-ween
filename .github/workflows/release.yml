@@ -65,9 +65,25 @@ jobs:
           name: Code-o-ween-dmg
           path: dist
 
+      # A release made by hand (gh release create vX.Y.Z dist/*.dmg ...) carries an image that
+      # was signed and notarized on a Mac. That one wins: the workflow's image is unsigned.
+      - name: Check for an image attached by hand
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name' 2>/dev/null | grep -q '\.dmg$'; then
+            echo "The release already carries a disk image; leaving it alone."
+            echo "attach=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "attach=true" >>"$GITHUB_OUTPUT"
+          fi
+
       # Lets users check where an image came from: gh attestation verify FILE --repo OWNER/REPO.
       # The .sha256 next to it only detects corruption, since it is hosted in the same place.
       - name: Attest build provenance
+        if: steps.existing.outputs.attach == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*.dmg
@@ -75,6 +91,7 @@ jobs:
       # No --clobber: an image that people may already have downloaded is never replaced.
       # Publishing a fix means a new tag.
       - name: Attach the DMG to the GitHub release
+        if: steps.existing.outputs.attach == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
