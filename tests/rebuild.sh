@@ -109,14 +109,6 @@ expect_fail "$cli" remove "$name" --delete-data --yes
 rm "$profile"
 mv "$profile.real" "$profile"
 
-# A broken recipe is refused even behind --app generic.
-if [[ -d "/Applications/Google Chrome.app" ]]; then
-  apps_before="$(find "$CODE_O_WEEN_APP_ROOT" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
-  if output="$("$cli" create "Browse $suffix" --app generic --source "/Applications/Google Chrome.app" 2>&1)"; then fail "broken bundle accepted behind --app generic"; fi
-  [[ "$output" == *"do not work yet"* ]] || fail "generic override refusal message: $output"
-  [[ "$(find "$CODE_O_WEEN_APP_ROOT" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" == "$apps_before" ]] || fail "generic override left an app behind"
-fi
-
 # install.sh: a relative install folder still yields working links, and install == bin is refused.
 # The manager build is pointed into the test folder so the real ~/Applications is never touched.
 (cd "$test_root" && CODE_O_WEEN_INSTALL_DIR=rel-install CODE_O_WEEN_BIN_ROOT="$test_root/ibin" \
@@ -126,10 +118,10 @@ expect_fail env CODE_O_WEEN_INSTALL_DIR="$test_root/same" CODE_O_WEEN_BIN_ROOT="
   CODE_O_WEEN_MANAGER_APP="$test_root/Manager2.app" "$package_dir/install.sh"
 [[ ! -e "$test_root/same/code-o-ween" ]] || fail "install into the command folder went ahead"
 
-# Chromium recipes are refused before anything is copied.
-if output="$("$cli" create "Browse $suffix" --app chrome 2>&1)"; then fail "chrome recipe accepted"; fi
-[[ "$output" == *"do not work yet"* ]] || fail "chrome refusal message: $output"
-[[ ! -e "$CODE_O_WEEN_APP_ROOT/Chrome - Browse $suffix.app" ]] || fail "chrome refusal left an app behind"
+# Only VS Code-style apps can be disguised; anything else is refused before copying.
+if output="$("$cli" create "Calc $suffix" --source /System/Applications/Calculator.app 2>&1)"; then fail "non-VS Code app accepted"; fi
+[[ "$output" == *"not a VS Code-style app"* ]] || fail "refusal message: $output"
+[[ -z "$(find "$CODE_O_WEEN_APP_ROOT" -maxdepth 1 -name "*Calc $suffix*")" ]] || fail "refusal left an app behind"
 expect_fail "$cli" create "$name"
 
 # A second disguise, with a custom color and a built-in icon (drawn, since no ICNS exists for it),

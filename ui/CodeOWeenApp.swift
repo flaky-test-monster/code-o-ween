@@ -7,7 +7,6 @@ struct Disguise: Identifiable, Hashable {
     let id: String
     let name: String
     let kind: String
-    let family: String
     let label: String
     let color: String
     let extensionsMode: String
@@ -17,36 +16,22 @@ struct Disguise: Identifiable, Hashable {
     let tintsWindow: Bool
     let appURL: URL
 
-    /// The window tint, the emoji title, and a pinned folder only apply to VS Code-style apps.
-    var isVSCodeStyle: Bool { family == "vscode" }
-
     var summary: String {
-        var parts = [label, color]
-        if extensionsMode != "none" {
-            parts.append("\(extensionsMode) extensions")
-        }
-        return parts.joined(separator: " · ")
+        [label, color, "\(extensionsMode) extensions"].joined(separator: " · ")
     }
 }
 
 /// One entry of `code-o-ween apps --porcelain`.
 struct AppRecipe: Identifiable, Hashable {
-    static let other = "generic"
+    /// The CLI's recipe for a VS Code-style app it does not know by name, passed with --source.
+    static let other = "other"
 
     let id: String
     let label: String
     let isInstalled: Bool
-    let supportsExtensions: Bool
     let source: String
-    /// "verified", "unverified" or "broken"; see the recipe notes in the CLI.
+    /// "verified" or "unverified"; see the recipe notes in the CLI.
     let status: String
-
-    var isBroken: Bool { status == "broken" }
-
-    /// The manager only dresses up code editors: the VS Code-style recipes, which the listing
-    /// marks as the ones with an extension directory, plus "Other app…" for an editor it does
-    /// not know by name. Browsers and chat apps stay available to the CLI.
-    var isCodeEditor: Bool { id == Self.other || supportsExtensions }
 }
 
 struct CommandResult: Sendable {
@@ -185,14 +170,12 @@ final class EditState: ObservableObject {
                 arguments.append("--built-in-icon")
             }
         }
-        if instance.isVSCodeStyle {
-            let folder = expandTilde(pinnedFolder)
-            if folder != (instance.pinnedFolder ?? "") {
-                arguments += folder.isEmpty ? ["--no-folder"] : ["--folder", folder]
-            }
-            if tintWindow != instance.tintsWindow {
-                arguments += ["--window-color", tintWindow ? "on" : "off"]
-            }
+        let folder = expandTilde(pinnedFolder)
+        if folder != (instance.pinnedFolder ?? "") {
+            arguments += folder.isEmpty ? ["--no-folder"] : ["--folder", folder]
+        }
+        if tintWindow != instance.tintsWindow {
+            arguments += ["--window-color", tintWindow ? "on" : "off"]
         }
         return arguments.isEmpty ? nil : ["update", instance.id] + arguments
     }
@@ -263,7 +246,6 @@ final class InstanceStore: ObservableObject {
                     id: slug,
                     name: readMetadata("name", from: resources) ?? appURL.deletingPathExtension().lastPathComponent,
                     kind: readMetadata("kind", from: resources) ?? "vscode",
-                    family: readMetadata("family", from: resources) ?? "vscode",
                     label: readMetadata("label", from: resources) ?? "Visual Studio Code",
                     color: readMetadata("color", from: resources) ?? "blue",
                     extensionsMode: readMetadata("extensions", from: resources) ?? "shared",
@@ -297,14 +279,13 @@ final class InstanceStore: ObservableObject {
             let result = await Self.execute(executable, arguments: ["apps", "--porcelain"])
             let parsed: [AppRecipe] = result.output.split(separator: "\n").compactMap { line in
                 let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-                guard fields.count >= 4 else { return nil }
+                guard fields.count >= 3 else { return nil }
                 return AppRecipe(
                     id: fields[0],
                     label: fields[1],
                     isInstalled: fields[2] == "yes",
-                    supportsExtensions: fields[3] == "yes",
-                    source: fields.count > 4 ? fields[4] : "",
-                    status: fields.count > 5 ? fields[5] : "unverified"
+                    source: fields.count > 3 ? fields[3] : "",
+                    status: fields.count > 4 ? fields[4] : "unverified"
                 )
             }
             if result.status == 0 {
@@ -704,10 +685,8 @@ struct EditInstanceView: View {
                     emoji: $edit.emoji,
                     imagePath: $edit.customIconPath
                 )
-                if edit.instance?.isVSCodeStyle ?? false {
-                    FolderPickerRow(path: $edit.pinnedFolder)
-                    TintToggle(isOn: $edit.tintWindow)
-                }
+                FolderPickerRow(path: $edit.pinnedFolder)
+                TintToggle(isOn: $edit.tintWindow)
             }
             .formStyle(.grouped)
             .disabled(store.isBusy)
@@ -818,10 +797,6 @@ struct ContentView: View {
         store.recipes.first { $0.id == form.recipe }
     }
 
-    private var editorRecipes: [AppRecipe] {
-        store.recipes.filter(\.isCodeEditor)
-    }
-
     private var isCustomCostume: Bool {
         form.costume == Costume.custom
     }
@@ -830,13 +805,9 @@ struct ContentView: View {
         form.recipe == AppRecipe.other
     }
 
-    private var supportsExtensions: Bool { isVSCodeStyle }
-
-    /// The recipe listing marks VS Code-style apps as the ones with a separate extension
-    /// directory, which is also what the window tint and a pinned folder need.
-    private var isVSCodeStyle: Bool {
-        if isOtherApp { return isVSCodeStyleBundle(form.sourceAppPath) }
-        return selectedRecipe?.supportsExtensions ?? false
+    /// "Other app…" must point at a VS Code-style bundle; the CLI refuses anything else.
+    private var sourceIsVSCodeStyle: Bool {
+        !isOtherApp || isVSCodeStyleBundle(form.sourceAppPath)
     }
 
     /// What the create button promises to disguise.
@@ -961,7 +932,7 @@ struct ContentView: View {
 
             Form {
                 Picker("App", selection: $form.recipe) {
-                    ForEach(editorRecipes) { recipe in
+                    ForEach(store.recipes) { recipe in
                         Text(recipeTitle(recipe)).tag(recipe.id)
                     }
                 }
@@ -1010,14 +981,9 @@ struct ContentView: View {
 
                 ColorPickerRow(selection: $form.color)
 
-                if isVSCodeStyle {
-                    FolderPickerRow(path: $form.pinnedFolder)
-                    TintToggle(isOn: $form.tintWindow)
-                }
-
-                if supportsExtensions {
-                    Toggle("Use a separate extension directory", isOn: $form.isolatedExtensions)
-                }
+                FolderPickerRow(path: $form.pinnedFolder)
+                TintToggle(isOn: $form.tintWindow)
+                Toggle("Use a separate extension directory", isOn: $form.isolatedExtensions)
 
                 if showsTrustOption {
                     Toggle("Trust this app's signature even if it is not from an identified developer", isOn: $form.trustSource)
@@ -1050,7 +1016,7 @@ struct ContentView: View {
         if recipe.id == AppRecipe.other { return "Other app…" }
         var notes: [String] = []
         if !recipe.isInstalled { notes.append("not found") }
-        if recipe.isBroken { notes.append("not working") } else if recipe.status != "verified" { notes.append("not yet verified") }
+        if recipe.status != "verified" { notes.append("not yet verified") }
         return notes.isEmpty ? recipe.label : "\(recipe.label) (\(notes.joined(separator: ", ")))"
     }
 
@@ -1060,15 +1026,8 @@ struct ContentView: View {
         isOtherApp || (selectedRecipe?.status ?? "verified") != "verified"
     }
 
-    /// Mirrors the CLI, which refuses these before copying anything.
-    private var selectedRecipeIsBroken: Bool {
-        !isOtherApp && (selectedRecipe?.isBroken ?? false)
-    }
-
     private var canCreate: Bool {
-        guard form.canCreate, !selectedRecipeIsBroken else { return false }
-        if isOtherApp && form.sourceAppPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
-        return true
+        form.canCreate && sourceIsVSCodeStyle
     }
 
     private func createInstance() {
@@ -1087,14 +1046,10 @@ struct ContentView: View {
         case .builtIn: arguments.append("--built-in-icon")
         case .keep: break
         }
-        if supportsExtensions {
-            arguments += ["--extensions", form.isolatedExtensions ? "isolated" : "shared"]
-        }
-        if isVSCodeStyle {
-            let folder = expandTilde(form.pinnedFolder)
-            if !folder.isEmpty { arguments += ["--folder", folder] }
-            arguments += ["--window-color", form.tintWindow ? "on" : "off"]
-        }
+        arguments += ["--extensions", form.isolatedExtensions ? "isolated" : "shared"]
+        let folder = expandTilde(form.pinnedFolder)
+        if !folder.isEmpty { arguments += ["--folder", folder] }
+        arguments += ["--window-color", form.tintWindow ? "on" : "off"]
         let created = form.trimmedName
         store.run(arguments, successMessage: "Created \(created)") {
             form.name = ""

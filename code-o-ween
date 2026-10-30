@@ -30,14 +30,14 @@ LAUNCHER_NAME="code-o-ween-launcher"
 BUNDLE_ID_PREFIX="local.code-o-ween"
 # Metadata files inside a disguise: Contents/Resources/<prefix>.<key>.
 METADATA_PREFIX="code-o-ween"
-ALL_KINDS="vscode vscode-insiders vscodium chrome chromium edge brave firefox slack discord obsidian generic"
+DEFAULT_COLOR="blue"
+ALL_KINDS="vscode vscode-insiders vscodium other"
 # A settings folder Code-o-ween created carries this marker naming the disguise that owns it.
 # Only a marked folder may be used or deleted.
 PROFILE_MARKER=".code-o-ween-profile"
-# Publisher Team IDs, pinned only where they were verified against a real installation. A
-# recipe with no pinned team accepts any Developer ID signature (see verify_source_app).
+# Microsoft's Team ID, pinned for Visual Studio Code. A recipe with no pinned team accepts any
+# Developer ID signature (see verify_source_app).
 MICROSOFT_TEAM_ID="UBF8T346G9"
-GOOGLE_TEAM_ID="EQHXZ8M8AV"
 # Darkest first, which is the order the manager's swatches show. Every preset is dark enough
 # for white text (a contrast of at least 4.5:1, see foregroundFor in apply_window_settings).
 # blue, green, orange, pink, purple, red, teal and yellow have hand-made bundled icons for
@@ -83,7 +83,7 @@ validate_name() {
 
 usage() {
   cat <<'EOF'
-Code-o-ween — disguise VS Code and other Mac apps for trick or treat.
+Code-o-ween — disguise VS Code for trick or treat.
 
 Usage:
   code-o-ween create NAME [--app APP | --source APP_BUNDLE [--trust-source]] [--color COLOR]
@@ -105,22 +105,20 @@ Usage:
 
 Examples:
   code-o-ween create Cauldron --color orange --emoji "🎃" --extensions isolated
-  code-o-ween create Personal --app chrome --color purple --emoji "👻"
-  code-o-ween create Standup --app slack --color teal
+  code-o-ween create Nightly --app vscode-insiders --color purple --emoji "👻"
   code-o-ween create Work --icon ~/Pictures/vampire-code.svg
   code-o-ween create Night --color "#1A1A2E" --emoji "🦇"
   code-o-ween create Cauldron --emoji "🎃" --folder ~/code/cauldron
   code-o-ween update Cauldron --color purple
-  code-o-ween create Beta --source "/Applications/Some Other App.app"
+  code-o-ween create Beta --source "/Applications/Some VS Code Fork.app"
   code-o-ween open Cauldron -- ~/code/cauldron
   code-cauldron ~/code/cauldron
-  chrome-personal https://example.com
 
 APP is one of the recipes listed by 'code-o-ween apps' (default: vscode). With --source
-alone, the app is recognized from its bundle identifier; unknown apps get a private HOME.
+alone, the app is recognized from its bundle identifier; any other VS Code-style app (a fork
+that ships Resources/app/product.json and its bin/ launcher) is accepted under its own name.
 
-COLOR is a preset name from 'code-o-ween colors' or any #RRGGBB value. The window tint, the
-emoji window title, and --folder apply to VS Code-style apps.
+COLOR is a preset name from 'code-o-ween colors' or any #RRGGBB value.
 
 A source app must be signed by its publisher (for recipes with a pinned Team ID) or by an
 identified developer. --trust-source accepts any validly signed build, for example VSCodium.
@@ -158,102 +156,55 @@ slugify() {
 # ---------------------------------------------------------------------------------------------
 # Recipes
 #
-# Every supported app has a recipe. Its family decides how a disguise keeps its data apart:
-#   vscode    --user-data-dir (and optionally --extensions-dir), the bundled command-line
-#             launcher, and a Keychain item of its own
-#   chromium  --user-data-dir=DIR
-#   firefox   --profile DIR
-#   home      a private HOME directory; this works for most other apps
+# Every supported app is a VS Code-style app: a disguise keeps its data apart with
+# --user-data-dir (and optionally --extensions-dir), gets a terminal shortcut on the bundled
+# command-line launcher, and a Keychain item of its own.
 #
-# load_kind sets KIND, KIND_LABEL, KIND_PREFIX (the "PREFIX - NAME.app" part), KIND_FAMILY,
-# KIND_SHORTCUT (terminal shortcut prefix for families without a CLI), KIND_CANDIDATES (the
-# bundle name looked up in /Applications and ~/Applications), KIND_BUNDLE_IDS, KIND_TEAM_ID
+# load_kind sets KIND, KIND_LABEL, KIND_PREFIX (the "PREFIX - NAME.app" part), KIND_CANDIDATES
+# (the bundle name looked up in /Applications and ~/Applications), KIND_BUNDLE_IDS, KIND_TEAM_ID
 # (the publisher's Team ID, when it is pinned), and KIND_STATUS:
 #   verified    created, launched and exercised on a Mac
 #   unverified  the mechanism is in place, but the app has not been run as a disguise
-#   broken      known not to work; create refuses it before copying anything
-# Only Visual Studio Code itself is verified. The other VS Code-style apps share its mechanism
-# but have not been run; Chromium-family apps cannot be re-signed yet (see sign_disguise).
+# Only Visual Studio Code itself is verified; the others share its mechanism but have not
+# been run.
 # ---------------------------------------------------------------------------------------------
 load_kind() {
   KIND="$1"
-  KIND_SHORTCUT=""
   KIND_CANDIDATES=""
   KIND_BUNDLE_IDS=""
   KIND_TEAM_ID=""
   KIND_STATUS="unverified"
   case "$KIND" in
     vscode)
-      KIND_LABEL="Visual Studio Code"; KIND_PREFIX="VS Code"; KIND_FAMILY="vscode"
+      KIND_LABEL="Visual Studio Code"; KIND_PREFIX="VS Code"
       KIND_CANDIDATES="Visual Studio Code.app"; KIND_BUNDLE_IDS="com.microsoft.VSCode"
       KIND_TEAM_ID="$MICROSOFT_TEAM_ID"; KIND_STATUS="verified" ;;
     vscode-insiders)
-      KIND_LABEL="Visual Studio Code - Insiders"; KIND_PREFIX="VS Code Insiders"; KIND_FAMILY="vscode"
+      KIND_LABEL="Visual Studio Code - Insiders"; KIND_PREFIX="VS Code Insiders"
       KIND_CANDIDATES="Visual Studio Code - Insiders.app"; KIND_BUNDLE_IDS="com.microsoft.VSCodeInsiders" ;;
     vscodium)
-      KIND_LABEL="VSCodium"; KIND_PREFIX="VSCodium"; KIND_FAMILY="vscode"
+      KIND_LABEL="VSCodium"; KIND_PREFIX="VSCodium"
       KIND_CANDIDATES="VSCodium.app"; KIND_BUNDLE_IDS="com.vscodium" ;;
-    chrome)
-      KIND_LABEL="Google Chrome"; KIND_PREFIX="Chrome"; KIND_FAMILY="chromium"; KIND_SHORTCUT="chrome"
-      KIND_CANDIDATES="Google Chrome.app"; KIND_BUNDLE_IDS="com.google.Chrome"
-      KIND_TEAM_ID="$GOOGLE_TEAM_ID" ;;
-    chromium)
-      KIND_LABEL="Chromium"; KIND_PREFIX="Chromium"; KIND_FAMILY="chromium"; KIND_SHORTCUT="chromium"
-      KIND_CANDIDATES="Chromium.app"; KIND_BUNDLE_IDS="org.chromium.Chromium" ;;
-    edge)
-      KIND_LABEL="Microsoft Edge"; KIND_PREFIX="Edge"; KIND_FAMILY="chromium"; KIND_SHORTCUT="edge"
-      KIND_CANDIDATES="Microsoft Edge.app"; KIND_BUNDLE_IDS="com.microsoft.edgemac" ;;
-    brave)
-      KIND_LABEL="Brave Browser"; KIND_PREFIX="Brave"; KIND_FAMILY="chromium"; KIND_SHORTCUT="brave"
-      KIND_CANDIDATES="Brave Browser.app"; KIND_BUNDLE_IDS="com.brave.Browser" ;;
-    firefox)
-      KIND_LABEL="Firefox"; KIND_PREFIX="Firefox"; KIND_FAMILY="firefox"; KIND_SHORTCUT="firefox"
-      KIND_CANDIDATES="Firefox.app"; KIND_BUNDLE_IDS="org.mozilla.firefox" ;;
-    slack)
-      KIND_LABEL="Slack"; KIND_PREFIX="Slack"; KIND_FAMILY="home"; KIND_SHORTCUT="slack"
-      KIND_CANDIDATES="Slack.app"; KIND_BUNDLE_IDS="com.tinyspeck.slackmacgap" ;;
-    discord)
-      KIND_LABEL="Discord"; KIND_PREFIX="Discord"; KIND_FAMILY="home"; KIND_SHORTCUT="discord"
-      KIND_CANDIDATES="Discord.app"; KIND_BUNDLE_IDS="com.hnc.Discord" ;;
-    obsidian)
-      KIND_LABEL="Obsidian"; KIND_PREFIX="Obsidian"; KIND_FAMILY="home"; KIND_SHORTCUT="obsidian"
-      KIND_CANDIDATES="Obsidian.app"; KIND_BUNDLE_IDS="md.obsidian" ;;
-    generic)
-      # Any app passed with --source. Label, prefix, and shortcut come from the bundle itself,
-      # and a VS Code-style bundle is treated like one (see configure_kind_for_source).
-      KIND_LABEL="Any other app"; KIND_PREFIX=""; KIND_FAMILY="home" ;;
+    other)
+      # Any VS Code-style app passed with --source: a fork under its own name. Label and
+      # prefix come from the bundle itself (see configure_kind_for_source).
+      KIND_LABEL="Another VS Code-style app"; KIND_PREFIX="" ;;
     *) die "unknown app '$KIND' (run 'code-o-ween apps')" ;;
   esac
-  [[ "$KIND_FAMILY" != chromium ]] || KIND_STATUS="broken"
 }
 
 status_description() {
   case "$1" in
     verified) printf 'verified' ;;
     unverified) printf 'not yet verified' ;;
-    broken) printf 'not working' ;;
     *) printf '%s' "$1" ;;
   esac
 }
 
-# Refuses a broken recipe before anything is copied, and says so once for an unverified one.
+# Says so once for a recipe that has not been run as a disguise yet.
 assert_kind_usable() {
-  case "$KIND_STATUS" in
-    broken)
-      die "$KIND_LABEL disguises do not work yet: its framework cannot be re-signed by Code-o-ween, so macOS would refuse to open the copy. Nothing was created." ;;
-    unverified)
-      warn "$KIND_LABEL has not been run as a disguise on a Mac yet; if it misbehaves, 'code-o-ween remove' takes it away again." ;;
-  esac
-}
-
-family_description() {
-  case "$1" in
-    vscode) printf -- '--user-data-dir' ;;
-    chromium) printf -- '--user-data-dir=' ;;
-    firefox) printf -- '--profile' ;;
-    home) printf 'private HOME' ;;
-    *) printf '%s' "$1" ;;
-  esac
+  [[ "$KIND_STATUS" != unverified ]] ||
+    warn "$KIND_LABEL has not been run as a disguise on a Mac yet; if it misbehaves, 'code-o-ween remove' takes it away again."
 }
 
 # Name of the environment variable that overrides a recipe's source bundle.
@@ -304,13 +255,13 @@ is_vscode_style_app() {
   [[ -f "$1/Contents/Resources/app/product.json" && -d "$1/Contents/Resources/app/bin" ]]
 }
 
-# Prints the recipe for an app bundle: a known bundle identifier, else generic.
+# Prints the recipe for an app bundle: a known bundle identifier, else other.
 detect_kind() {
   local kind
   if kind="$(kind_for_bundle_id "$(plist_value "$1" CFBundleIdentifier)")"; then
     printf '%s' "$kind"
   else
-    printf 'generic'
+    printf 'other'
   fi
 }
 
@@ -321,17 +272,13 @@ app_bundle_name() {
   printf '%s' "$name"
 }
 
-# Loads a recipe and, for generic, fills in what the bundle itself tells us.
+# Loads a recipe and, for other, takes the names from the bundle itself.
 configure_kind_for_source() {
   local kind="$1" source="$2"
   load_kind "$kind"
-  if [[ "$KIND" == generic ]]; then
+  if [[ "$KIND" == other ]]; then
     KIND_LABEL="$(app_bundle_name "$source")"
     KIND_PREFIX="$KIND_LABEL"
-    KIND_SHORTCUT="$(slugify "$KIND_LABEL")"
-    if is_vscode_style_app "$source"; then
-      KIND_FAMILY="vscode"
-    fi
   fi
 }
 
@@ -374,8 +321,8 @@ color_names() {
 }
 
 # Renders a transparent 1024x1024 PNG with AppKit via JavaScript for Automation, which ships
-# with macOS. Usage: render_png emoji EMOJI HEX OUTPUT | render_png image FILE OUTPUT |
-# render_png badge FILE HEX OUTPUT (the image, e.g. an app's own .icns, on a colored tile).
+# with macOS. Usage: render_png emoji EMOJI HEX OUTPUT | render_png code HEX OUTPUT |
+# render_png image FILE OUTPUT.
 render_png() {
   /usr/bin/osascript -l JavaScript - "$@" >/dev/null 2>&1 <<'JXA'
 ObjC.import('AppKit');
@@ -406,10 +353,10 @@ function run(argv) {
     const bounds = text.sizeWithAttributes(attributes);
     text.drawAtPointWithAttributes($.NSMakePoint((size - bounds.width) / 2, (size - bounds.height) / 2), attributes);
   };
-  const drawImage = (file, box) => {
+  const drawImage = (file) => {
     const image = $.NSImage.alloc.initWithContentsOfFile(file);
     if (image.isNil() || image.size.width <= 0 || image.size.height <= 0) throw new Error('unreadable image');
-    const scale = Math.min(box / image.size.width, box / image.size.height);
+    const scale = Math.min(size / image.size.width, size / image.size.height);
     const w = image.size.width * scale, h = image.size.height * scale;
     image.drawInRectFromRectOperationFraction($.NSMakeRect((size - w) / 2, (size - h) / 2, w, h), $.NSZeroRect, $.NSCompositingOperationSourceOver, 1);
   };
@@ -419,11 +366,8 @@ function run(argv) {
   } else if (mode === 'code') {
     const foreground = paintTile(argv[1]);
     drawCentered('</>', $.NSFont.monospacedSystemFontOfSizeWeight(360, $.NSFontWeightBold), foreground);
-  } else if (mode === 'badge') {
-    paintTile(argv[2]);
-    drawImage(argv[1], 640);
   } else {
-    drawImage(argv[1], size);
+    drawImage(argv[1]);
   }
   $.NSGraphicsContext.restoreGraphicsState;
   const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({}));
@@ -485,63 +429,25 @@ render_to_icns() {
   rm -rf -- "$tmp_root"
 }
 
-render_emoji_icon() {
-  local emoji="$1" color="$2" output="$3" tmp_root
+# Draws an icon with render_png and packs it into OUTPUT. Usage: render_drawn_icon OUTPUT MODE ARGS...
+render_drawn_icon() {
+  local output="$1" tmp_root
+  shift
   tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
-  render_png emoji "$emoji" "$(color_hex "$color")" "$tmp_root/emoji.png" ||
-    { rm -rf -- "$tmp_root"; die "macOS could not draw the emoji icon"; }
-  png_to_icns "$tmp_root/emoji.png" "$output" "$tmp_root"
+  render_png "$@" "$tmp_root/icon.png" || { rm -rf -- "$tmp_root"; die "macOS could not draw the $1 icon"; }
+  png_to_icns "$tmp_root/icon.png" "$output" "$tmp_root"
   rm -rf -- "$tmp_root"
 }
 
-# The drawn "</>" badge, for colors without a bundled icon.
-render_code_icon() {
-  local color="$1" output="$2" tmp_root
-  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
-  render_png code "$(color_hex "$color")" "$tmp_root/code.png" ||
-    { rm -rf -- "$tmp_root"; die "macOS could not draw the built-in icon"; }
-  png_to_icns "$tmp_root/code.png" "$output" "$tmp_root"
-  rm -rf -- "$tmp_root"
-}
-
-# The icon a disguise gets when no emoji or image was chosen. VS Code-style apps use the
-# hand-made bundled icons; other apps wear their own icon on the colored tile. Colors without
-# either fall back to the drawn badge.
+# The icon a disguise gets when no emoji or image was chosen: the hand-made bundled icon for
+# the color, or the drawn </> badge for colors without one.
 built_in_icon() {
-  local color="$1" output="$2" family="$3" source="${4:-}" source_icon
-  if [[ "$family" == vscode && -f "$ICON_DIR/$color.icns" ]]; then
+  local color="$1" output="$2"
+  if [[ -f "$ICON_DIR/$color.icns" ]]; then
     cp "$ICON_DIR/$color.icns" "$output"
-    return
+  else
+    render_drawn_icon "$output" code "$(color_hex "$color")"
   fi
-  if [[ "$family" != vscode && -n "$source" ]] && source_icon="$(source_icon_file "$source")"; then
-    render_badge_icon "$source_icon" "$color" "$output"
-    return
-  fi
-  render_code_icon "$color" "$output"
-}
-
-# The source app's own icon on a colored tile, so disguises of the same app stay apart.
-render_badge_icon() {
-  local source_icon="$1" color="$2" output="$3" tmp_root
-  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
-  if render_png badge "$source_icon" "$(color_hex "$color")" "$tmp_root/badge.png"; then
-    png_to_icns "$tmp_root/badge.png" "$output" "$tmp_root"
-    rm -rf -- "$tmp_root"
-    return
-  fi
-  rm -rf -- "$tmp_root"
-  # Fallback: keep the app's own icon without the tile.
-  render_to_icns "$source_icon" "$output"
-}
-
-# Prints the .icns file an app bundle declares, if it has one.
-source_icon_file() {
-  local app="$1" icon
-  icon="$(plist_value "$app" CFBundleIconFile)"
-  [[ -n "$icon" ]] || return 1
-  [[ "$icon" == *.icns ]] || icon="$icon.icns"
-  [[ -f "$app/Contents/Resources/$icon" ]] || return 1
-  printf '%s' "$app/Contents/Resources/$icon"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -566,21 +472,19 @@ source_executable() {
 # publisher; the others accept any Apple-anchored signature, which still rejects unsigned and
 # tampered bundles. --trust-source relaxes this to "the signature verifies".
 verify_source_app() {
-  local source="$1" trust="$2" team="$3" requirement
+  local source="$1" trust="$2" team="$3" problem
+  local -a requirement=()
   if [[ "$trust" == true ]]; then
-    run_quiet /usr/bin/codesign --verify --deep --strict "$source" ||
-      die "the source app's code signature is not valid: $source"
-    return
-  fi
-  if [[ -n "$team" ]]; then
-    requirement="anchor apple generic and certificate leaf[subject.OU] = \"$team\""
-    run_quiet /usr/bin/codesign --verify --deep --strict -R="$requirement" "$source" ||
-      die "the source app is not ${KIND_LABEL:-the expected app} signed by its publisher: $source (pass --trust-source to use another validly signed build)"
+    problem="the source app's code signature is not valid"
+  elif [[ -n "$team" ]]; then
+    requirement=(-R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"")
+    problem="the source app is not ${KIND_LABEL:-the expected app} signed by its publisher (pass --trust-source to use another validly signed build)"
   else
-    requirement="anchor apple generic"
-    run_quiet /usr/bin/codesign --verify --deep --strict -R="$requirement" "$source" ||
-      die "the source app is not signed by an identified developer: $source (pass --trust-source to use it anyway)"
+    requirement=(-R="anchor apple generic")
+    problem="the source app is not signed by an identified developer (pass --trust-source to use it anyway)"
   fi
+  run_quiet /usr/bin/codesign --verify --deep --strict ${requirement[@]+"${requirement[@]}"} "$source" ||
+    die "$problem: $source"
 }
 
 # Adds the disable-library-validation entitlement to CODE and re-signs it ad hoc under the
@@ -620,8 +524,8 @@ sign_disguise() {
   rm -rf -- "$app/Contents/_CodeSignature"
   run_quiet /usr/bin/codesign --force --deep --sign - --preserve-metadata=entitlements,flags "$app" ||
     die "could not sign the disguise at $app"
-  # Helper bundles live directly in Contents/Frameworks for Electron apps and inside a
-  # versioned framework for Chromium ones, so they are found rather than globbed.
+  # Helper bundles live in Contents/Frameworks, directly or inside a versioned framework, so
+  # they are found rather than globbed.
   #
   # Depth-first, and frameworks are re-sealed in the same pass: signing a helper invalidates
   # the seal of the framework that contains it, and only re-sealing the outer bundle would
@@ -640,8 +544,6 @@ sign_disguise() {
     die "could not seal the disguise at $app"
   # A disguise that does not verify will be refused by Launch Services, so it is better to fail
   # here and let the create transaction roll back than to install a bundle that cannot open.
-  # Chromium-family apps currently land here: their versioned framework cannot be re-signed by
-  # these means, which is a known gap rather than something this signing order introduced.
   run_quiet /usr/bin/codesign --verify --deep --strict "$app" ||
     die "the disguise at $app does not pass signature verification, so macOS would refuse to open it; this app's bundle layout is not supported yet"
 }
@@ -706,19 +608,13 @@ claim_profile() {
 # ---------------------------------------------------------------------------------------------
 # Locating disguises and their metadata
 # ---------------------------------------------------------------------------------------------
-app_roots() {
-  printf '%s\n' "$APP_ROOT"
-}
-
 # Prints the path of every disguise, NUL-separated, in a stable order.
 find_instances() {
-  local root metadata
-  while IFS= read -r root; do
-    [[ -d "$root" ]] || continue
-    while IFS= read -r -d '' metadata; do
-      printf '%s\0' "${metadata%/Contents/Resources/*.slug}"
-    done < <(find -H "$root" -mindepth 4 -maxdepth 4 -type f -name "$METADATA_PREFIX.slug" -print0 2>/dev/null || true)
-  done < <(app_roots) | sort -z
+  local metadata
+  [[ -d "$APP_ROOT" ]] || return 0
+  while IFS= read -r -d '' metadata; do
+    printf '%s\0' "${metadata%/Contents/Resources/*.slug}"
+  done < <(find -H "$APP_ROOT" -mindepth 4 -maxdepth 4 -type f -name "$METADATA_PREFIX.slug" -print0 2>/dev/null || true) | sort -z
 }
 
 # The metadata file for KEY inside a disguise.
@@ -726,18 +622,17 @@ metadata_path() {
   printf '%s' "$1/Contents/Resources/$METADATA_PREFIX.$2"
 }
 
+# Prints the contents of FILE, or DEFAULT when it does not exist.
+read_file_or_default() {
+  if [[ -f "$1" ]]; then printf '%s' "$(<"$1")"; else printf '%s' "${2:-}"; fi
+}
+
 read_metadata() {
-  local file
-  file="$(metadata_path "$1" "$2")"
-  if [[ -f "$file" ]]; then
-    printf '%s' "$(<"$file")"
-  else
-    printf '%s' "${3:-}"
-  fi
+  read_file_or_default "$(metadata_path "$1" "$2")" "${3:-}"
 }
 
 write_metadata() {
-  printf '%s' "$3" >"$1/Contents/Resources/$METADATA_PREFIX.$2"
+  printf '%s' "$3" >"$(metadata_path "$1" "$2")"
 }
 
 require_instance() {
@@ -771,10 +666,6 @@ name_for_app() {
 
 kind_for_app() {
   read_metadata "$1" kind vscode
-}
-
-family_for_app() {
-  read_metadata "$1" family vscode
 }
 
 label_for_app() {
@@ -885,8 +776,7 @@ delete_keychain_item() {
 # Per-disguise settings kept beside the profile
 # ---------------------------------------------------------------------------------------------
 read_profile_setting() {
-  local file="$1/$2"
-  if [[ -f "$file" ]]; then printf '%s' "$(<"$file")"; else printf '%s' "${3:-}"; fi
+  read_file_or_default "$1/$2" "${3:-}"
 }
 
 write_profile_setting() {
@@ -895,10 +785,6 @@ write_profile_setting() {
 
 clear_profile_setting() {
   rm -f -- "$1/$2"
-}
-
-window_tint_enabled() {
-  [[ "$(read_profile_setting "$1" window-tint off)" == "on" ]]
 }
 
 resolve_folder() {
@@ -925,8 +811,6 @@ apply_window_settings() {
   # The exact title Code-o-ween installed, if any: only that value is ever replaced or removed.
   managed_title="$(read_profile_setting "$profile" window-title)"
   [[ "$tint_op" != keep || "$title_op" != keep || "$update_op" != keep ]] || return 0
-  # settings.json, the window tint, and the emoji title are VS Code-style features.
-  [[ "$(family_for_app "$app")" == vscode ]] || return 0
   executable="$(read_metadata "$app" executable Code)"
   settings="$profile/user-data/User/settings.json"
   [[ "$tint_op" != set ]] || hex="$(color_hex "$color")"
@@ -1290,8 +1174,7 @@ try {
 }
 JS
   )" || status=$?
-  if [[ $status -ne 0 ]]
-  then
+  if [[ $status -ne 0 ]]; then
     # The reason goes to the caller, which decides whether this is fatal; the manager shows
     # only Error: lines, so it must end up in the error and not in a separate warning.
     local reason
@@ -1363,67 +1246,37 @@ validate_disguise_options() {
   [[ "$folder_action" != set ]] || folder="$(resolve_folder "$folder")"
 }
 
-# The window tint, the emoji window title, and a pinned folder all rely on VS Code's settings
-# and its folder-opening CLI, so they are refused for other apps rather than silently ignored.
-assert_vscode_only_options() {
-  local family="$1" label="$2"
-  [[ -z "$folder_action" || "$family" == vscode ]] || die "--folder is only available for VS Code-style apps (this is $label)"
-  [[ -z "$window_tint" || "$family" == vscode ]] || die "--window-color is only available for VS Code-style apps (this is $label)"
-}
-
 # ---------------------------------------------------------------------------------------------
 # Generated scripts
 # ---------------------------------------------------------------------------------------------
 
-# The bundle's CFBundleExecutable. It starts the original executable with the arguments (or
-# environment) that keep this disguise's data apart.
+# The bundle's CFBundleExecutable. It starts the original executable with the arguments that
+# keep this disguise's data apart.
 write_launcher() {
-  local launcher="$1" original_executable="$2" profile_path="$3" family="$4" extensions_mode="${5:-shared}" slug="${6:-}"
+  local launcher="$1" original_executable="$2" profile_path="$3" extensions_mode="${4:-shared}" slug="${5:-}"
   local quoted_profile quoted_executable isolation_lines marker_lines=""
   printf -v quoted_profile '%q' "$profile_path"
   printf -v quoted_executable '%q' "$original_executable"
 
-  case "$family" in
-    vscode)
-      isolation_lines='mkdir -p "$profile_root/user-data"
+  isolation_lines='mkdir -p "$profile_root/user-data"
 args=(--user-data-dir "$profile_root/user-data")'
-      if [[ "$extensions_mode" == "isolated" ]]; then
-        isolation_lines="$isolation_lines"$'\n''args+=(--extensions-dir "$profile_root/extensions")'
-      fi
-      isolation_lines="$isolation_lines"$'\n''# Opened from Finder or the Dock: open the pinned folder, if one is set and still exists.
+  if [[ "$extensions_mode" == "isolated" ]]; then
+    isolation_lines="$isolation_lines"$'\n''args+=(--extensions-dir "$profile_root/extensions")'
+  fi
+  isolation_lines="$isolation_lines"$'\n''# Opened from Finder or the Dock: open the pinned folder, if one is set and still exists.
 if [[ $# -eq 0 && -f "$profile_root/pinned-folder" ]]; then
   pinned_folder="$(<"$profile_root/pinned-folder")"
   if [[ -d "$pinned_folder" ]]; then
     set -- "$pinned_folder"
   fi
 fi
-exec "$executable" "${args[@]}" "$@"' ;;
-    chromium)
-      isolation_lines='mkdir -p "$profile_root/user-data"
-exec "$executable" --user-data-dir="$profile_root/user-data" "$@"' ;;
-    firefox)
-      isolation_lines='mkdir -p "$profile_root/profile"
-exec "$executable" --profile "$profile_root/profile" "$@"' ;;
-    home)
-      # Library (settings, caches, preferences) stays private; the usual folders are linked so
-      # file dialogs and drag-and-drop still reach the real ones.
-      isolation_lines='private_home="$profile_root/home"
-mkdir -p "$private_home"
-for folder in Desktop Documents Downloads Movies Music Pictures; do
-  if [[ -n "${HOME:-}" && -d "$HOME/$folder" && ! -e "$private_home/$folder" ]]; then
-    ln -s "$HOME/$folder" "$private_home/$folder" 2>/dev/null || true
-  fi
-done
-export HOME="$private_home"
-exec "$executable" "$@"' ;;
-    *) die "unknown isolation family: $family" ;;
-  esac
+exec "$executable" "${args[@]}" "$@"'
 
   # The original Electron executable must keep its name: Electron locates
   # "Frameworks/<executable> Helper.app" from it and aborts otherwise.
   # A settings folder that went missing is recreated with its ownership marker, so the other
   # commands keep accepting it; an existing folder is never claimed here.
-  [[ -z "$slug" ]] || marker_lines="$(profile_guard_lines "$slug" "$family")"
+  [[ -z "$slug" ]] || marker_lines="$(profile_guard_lines "$slug")"
   cat >"$launcher" <<EOF
 #!/bin/bash
 set -e
@@ -1441,11 +1294,11 @@ EOF
 # Lines for a generated script, run before it touches the settings folder: refuse a symbolic
 # link and a folder Code-o-ween does not own (the same rules create and update apply, so a
 # profile swapped for a link to someone else's folder cannot be used by a launch), and recreate
-# a missing folder with its marker and, for VS Code-style apps, update.mode pinned, so a recovered
-# profile cannot update the clone before the next refresh. An existing folder is never claimed.
+# a missing folder with its marker and update.mode pinned, so a recovered profile cannot update
+# the clone before the next refresh. An existing folder is never claimed.
 # Launched from Finder there is no terminal, so refusals also show an alert.
 profile_guard_lines() {
-  local slug="$1" family="${2:-}" quoted_slug
+  local slug="$1" quoted_slug
   printf -v quoted_slug '%q' "$slug"
   cat <<EOF
 refuse() {
@@ -1457,12 +1310,10 @@ if [[ -L "\$profile_root" ]]; then refuse "the settings folder \$profile_root is
 if [[ ! -e "\$profile_root" ]]; then
   mkdir -p "\$profile_root" && printf '%s' $quoted_slug >"\$profile_root/$PROFILE_MARKER"
 EOF
-  if [[ "$family" == vscode ]]; then
-    cat <<'EOF'
+  cat <<'EOF'
   mkdir -p "$profile_root/user-data/User"
   [[ -e "$profile_root/user-data/User/settings.json" ]] || printf '{\n  "update.mode": "none"\n}\n' >"$profile_root/user-data/User/settings.json"
 EOF
-  fi
   cat <<EOF
 fi
 if [[ "\$(cat "\$profile_root/$PROFILE_MARKER" 2>/dev/null)" != $quoted_slug ]]; then
@@ -1487,47 +1338,33 @@ unlock_slug() {
 }
 SLUG_LOCK=""
 
-# The terminal shortcut in BIN_ROOT. VS Code-style apps get their own CLI (code-NAME ...);
-# other apps are opened through Launch Services, which hands arguments to a running disguise.
+# The terminal shortcut in BIN_ROOT: the disguise's own command-line launcher (code-NAME ...),
+# pointed at its settings folder.
 write_shortcut() {
   local slug="$1" app="$2"
-  local shortcut family cli extensions_mode quoted_profile quoted_cli quoted_app shortcut_tmp extension_lines=""
+  local shortcut cli extensions_mode quoted_profile quoted_cli shortcut_tmp extension_lines=""
   shortcut="$(shortcut_for_app "$app" "$slug")"
-  family="$(family_for_app "$app")"
   assert_shortcut_owned "$slug" "$shortcut"
   mkdir -p "$BIN_ROOT"
   shortcut_tmp="$(mktemp "$BIN_ROOT/.$shortcut.XXXXXX")"
-  if [[ "$family" == vscode ]]; then
-    cli="$(read_metadata "$app" cli "Contents/Resources/app/bin/code")"
-    extensions_mode="$(read_metadata "$app" extensions shared)"
-    printf -v quoted_profile '%q' "$(profile_for_app "$app" "$slug")"
-    printf -v quoted_cli '%q' "$app/$cli"
-    if [[ "$extensions_mode" == "isolated" ]]; then
-      extension_lines='args+=(--extensions-dir "$profile_root/extensions")'
-    fi
-    cat >"$shortcut_tmp" <<EOF
+  cli="$(read_metadata "$app" cli "Contents/Resources/app/bin/code")"
+  extensions_mode="$(read_metadata "$app" extensions shared)"
+  printf -v quoted_profile '%q' "$(profile_for_app "$app" "$slug")"
+  printf -v quoted_cli '%q' "$app/$cli"
+  if [[ "$extensions_mode" == "isolated" ]]; then
+    extension_lines='args+=(--extensions-dir "$profile_root/extensions")'
+  fi
+  cat >"$shortcut_tmp" <<EOF
 #!/bin/bash
 # Managed by Code-o-ween: $slug
 set -e
 profile_root=$quoted_profile
-$(profile_guard_lines "$slug" vscode)
+$(profile_guard_lines "$slug")
 mkdir -p "\$profile_root/user-data"
 args=(--user-data-dir "\$profile_root/user-data")
 $extension_lines
 exec $quoted_cli "\${args[@]}" "\$@"
 EOF
-  else
-    printf -v quoted_app '%q' "$app"
-    cat >"$shortcut_tmp" <<EOF
-#!/bin/bash
-# Managed by Code-o-ween: $slug
-set -e
-if [[ \$# -eq 0 ]]; then
-  exec /usr/bin/open -a $quoted_app
-fi
-exec /usr/bin/open -n -a $quoted_app --args "\$@"
-EOF
-  fi
   chmod +x "$shortcut_tmp"
   assert_shortcut_owned "$slug" "$shortcut"
   mv -f "$shortcut_tmp" "$BIN_ROOT/$shortcut"
@@ -1552,7 +1389,7 @@ create_instance() (
       continue
     fi
     case "$1" in
-      --app|--kind) require_value "$@"; kind="$2"; shift 2 ;;
+      --app) require_value "$@"; kind="$2"; shift 2 ;;
       --extensions) require_value "$@"; extensions_mode="$2"; shift 2 ;;
       --source) require_value "$@"; source="$2"; shift 2 ;;
       --trust-source) trust_source="true"; shift ;;
@@ -1561,71 +1398,58 @@ create_instance() (
     esac
   done
   validate_disguise_options
-  [[ -n "$color" ]] || color=blue
+  [[ -n "$color" ]] || color="$DEFAULT_COLOR"
   [[ -n "$icon_mode" ]] || icon_mode=built-in
-  case "$extensions_mode" in ""|shared|isolated|none) ;; *) die "--extensions must be shared or isolated" ;; esac
+  case "$extensions_mode" in ""|shared|isolated) ;; *) die "--extensions must be shared or isolated" ;; esac
 
   # Which app, and which copy of it.
   local detected
   if [[ -z "$source" ]]; then
     [[ -n "$kind" ]] || kind="vscode"
     load_kind "$kind"
-    # Refused before the source is even looked for, so the answer is "does not work", not
-    # "not installed", on a Mac without the app.
-    [[ "$KIND_STATUS" != broken ]] || assert_kind_usable
     source="$(default_source_app)"
   fi
   [[ -d "$source/Contents/MacOS" && -f "$source/Contents/Info.plist" ]] || die "not a macOS app bundle: $source"
   source="$(cd "$source" && pwd -P)"
   detected="$(detect_kind "$source")"
   local detected_team=""
-  if [[ "$detected" != generic ]]; then
-    # An app known not to work is refused whatever --app says, --app generic included.
+  if [[ "$detected" != other ]]; then
     load_kind "$detected"
-    [[ "$KIND_STATUS" != broken ]] || assert_kind_usable
     detected_team="$KIND_TEAM_ID"
   fi
   if [[ -z "$kind" ]]; then
     kind="$detected"
-  elif [[ "$kind" != "$detected" && "$kind" != generic && "$detected" != generic ]]; then
+  elif [[ "$kind" != "$detected" && "$kind" != other && "$detected" != other ]]; then
     # A recognized app under a different recipe is almost certainly a mistake.
     load_kind "$detected"
     die "$(basename "$source") is $KIND_LABEL; pass --app $detected or omit --app"
   fi
   configure_kind_for_source "$kind" "$source"
-  # A recognized bundle keeps its publisher requirement under --app generic too; only
+  # A recognized bundle keeps its publisher requirement under --app other too; only
   # --trust-source relaxes it.
   [[ -z "$detected_team" ]] || KIND_TEAM_ID="$detected_team"
   assert_kind_usable
-  assert_vscode_only_options "$KIND_FAMILY" "$KIND_LABEL"
+  is_vscode_style_app "$source" ||
+    die "$source is not a VS Code-style app (no Contents/Resources/app/product.json and bin/); only VS Code and its forks can be disguised"
   [[ ! -f "$(metadata_path "$source" slug)" ]] || die "use the original $KIND_LABEL installation as --source, not a disguise"
 
   local executable
   executable="$(source_executable "$source")"
   verify_source_app "$source" "$trust_source" "$KIND_TEAM_ID"
 
-  local cli_relative="" cli_name shortcut
-  if [[ "$KIND_FAMILY" == vscode ]]; then
-    is_vscode_style_app "$source" || die "$source does not look like a VS Code-style app"
-    cli_name="$(product_application_name "$source" "$executable")"
-    cli_relative="Contents/Resources/app/bin/$cli_name"
-    shortcut="$cli_name"
-    [[ -n "$extensions_mode" && "$extensions_mode" != none ]] || extensions_mode="shared"
-  else
-    [[ "$extensions_mode" != isolated ]] || die "--extensions isolated is only available for VS Code-style apps"
-    extensions_mode="none"
-    shortcut="$KIND_SHORTCUT"
-  fi
+  local cli_relative cli_name
+  cli_name="$(product_application_name "$source" "$executable")"
+  cli_relative="Contents/Resources/app/bin/$cli_name"
+  [[ -n "$extensions_mode" ]] || extensions_mode="shared"
 
-  local slug app existing existing_kind icon plist tmp_app backup_app final_icon profile_path source_icon
+  local slug app existing shortcut plist tmp_app backup_app final_icon profile_path
   local target_root transaction installed=false committed=false
   slug="$(slugify "$name")"
   [[ ${#slug} -le 50 ]] || die "NAME is too long (the normalized name must be 50 characters or fewer)"
-  shortcut="$shortcut-$slug"
+  shortcut="$cli_name-$slug"
   existing="$(app_for_slug "$slug" || true)"
   if [[ -n "$existing" ]]; then
-    existing_kind="$(kind_for_app "$existing")"
-    if [[ "$existing_kind" != "$kind" ]]; then
+    if [[ "$(kind_for_app "$existing")" != "$kind" ]]; then
       die "the name '$name' is already used by a $(label_for_app "$existing") disguise at $existing; choose another name"
     fi
     [[ "$force" == "true" ]] || die "disguise '$name' already exists at $existing (use --force to rebuild it)"
@@ -1645,7 +1469,7 @@ create_instance() (
   fi
   app="$target_root/$KIND_PREFIX - $name.app"
   profile_path="$(profile_for_app "${existing:-$app}" "$slug")"
-  [[ "$KIND_FAMILY" != vscode ]] || assert_socket_path_fits "$profile_path"
+  assert_socket_path_fits "$profile_path"
   claim_profile "$profile_path" "$slug"
   lock_slug "$target_root" "$slug"
   transaction="$(mktemp -d "$target_root/.transaction.XXXXXX")"
@@ -1674,33 +1498,28 @@ create_instance() (
   copy_app_bundle "$source" "$tmp_app"
 
   plist="$tmp_app/Contents/Info.plist"
-  write_launcher "$tmp_app/Contents/MacOS/$LAUNCHER_NAME" "$executable" "$profile_path" "$KIND_FAMILY" "$extensions_mode" "$slug"
-  if [[ "$KIND_FAMILY" == vscode ]]; then
-    set_keychain_name "$tmp_app" "$(keychain_service_for_slug "$slug")" "$source" "$executable"
-  fi
+  write_launcher "$tmp_app/Contents/MacOS/$LAUNCHER_NAME" "$executable" "$profile_path" "$extensions_mode" "$slug"
+  set_keychain_name "$tmp_app" "$(keychain_service_for_slug "$slug")" "$source" "$executable"
 
   final_icon="$tmp_app/Contents/Resources/$METADATA_PREFIX.icns"
   case "$icon_mode" in
     image) render_to_icns "$icon_value" "$final_icon" ;;
-    emoji) render_emoji_icon "$icon_value" "$color" "$final_icon" ;;
-    built-in) built_in_icon "$color" "$final_icon" "$KIND_FAMILY" "$source" ;;
+    emoji) render_drawn_icon "$final_icon" emoji "$icon_value" "$(color_hex "$color")" ;;
+    built-in) built_in_icon "$color" "$final_icon" ;;
   esac
 
   /usr/bin/plutil -replace CFBundleExecutable -string "$LAUNCHER_NAME" "$plist"
   /usr/bin/plutil -replace CFBundleIdentifier -string "$BUNDLE_ID_PREFIX.$slug" "$plist"
   # CFBundleName must stay unchanged: Electron derives "Frameworks/<CFBundleName> Helper.app"
   # from it and aborts at launch if the helper cannot be found.
-  /usr/bin/plutil -replace CFBundleDisplayName -string "$KIND_PREFIX - $name" "$plist" 2>/dev/null || \
-    /usr/bin/plutil -insert CFBundleDisplayName -string "$KIND_PREFIX - $name" "$plist"
-  /usr/bin/plutil -replace CFBundleIconFile -string "$METADATA_PREFIX.icns" "$plist" 2>/dev/null || \
-    /usr/bin/plutil -insert CFBundleIconFile -string "$METADATA_PREFIX.icns" "$plist"
+  /usr/bin/plutil -replace CFBundleDisplayName -string "$KIND_PREFIX - $name" "$plist"
+  /usr/bin/plutil -replace CFBundleIconFile -string "$METADATA_PREFIX.icns" "$plist"
   # An asset-catalog icon would take precedence over CFBundleIconFile.
   /usr/bin/plutil -remove CFBundleIconName "$plist" >/dev/null 2>&1 || true
 
   write_metadata "$tmp_app" slug "$slug"
   write_metadata "$tmp_app" name "$name"
   write_metadata "$tmp_app" kind "$kind"
-  write_metadata "$tmp_app" family "$KIND_FAMILY"
   write_metadata "$tmp_app" label "$KIND_LABEL"
   write_metadata "$tmp_app" color "$color"
   write_metadata "$tmp_app" extensions "$extensions_mode"
@@ -1723,27 +1542,25 @@ create_instance() (
   if [[ -e "$app" && "$app" != "$existing" ]]; then
     die "an app named '$app' already exists"
   fi
-  if [[ "$KIND_FAMILY" == vscode ]]; then
-    # Settings are applied before the new bundle is committed, so a disguise is never installed
-    # without update.mode pinned: a settings file that cannot be edited fails the whole create
-    # and the previous app comes back. A brand-new disguise must not inherit a pin left in a
-    # kept profile, and starts tinted.
-    [[ -n "$folder_action" || -n "$existing" ]] || folder_action=clear
-    [[ -n "$window_tint" || -n "$existing" ]] || window_tint=on
-    local tint_state tint_op=keep title_op=clear
-    tint_state="${window_tint:-$(read_profile_setting "$profile_path" window-tint off)}"
-    if [[ "$tint_state" == on ]]; then
-      tint_op="set"
-    elif [[ "$window_tint" == off ]]; then
-      # Only an explicit "off" removes colors: the user may have set their own.
-      tint_op="clear"
-    fi
-    [[ "$icon_mode" != emoji ]] || title_op="set"
-    apply_window_settings "$tmp_app" "$profile_path" "$tint_op" "$color" "$title_op" "$icon_value" set ||
-      die "the disguise was not installed: $LAST_SETTINGS_ERROR (fix or move aside that file)"
-    apply_pinned_folder "$profile_path" "$folder_action" "$folder"
-    [[ -z "$window_tint" ]] || write_profile_setting "$profile_path" window-tint "$window_tint"
+  # Settings are applied before the new bundle is committed, so a disguise is never installed
+  # without update.mode pinned: a settings file that cannot be edited fails the whole create
+  # and the previous app comes back. A brand-new disguise must not inherit a pin left in a
+  # kept profile, and starts tinted.
+  [[ -n "$folder_action" || -n "$existing" ]] || folder_action=clear
+  [[ -n "$window_tint" || -n "$existing" ]] || window_tint=on
+  local tint_state tint_op=keep title_op=clear
+  tint_state="${window_tint:-$(read_profile_setting "$profile_path" window-tint off)}"
+  if [[ "$tint_state" == on ]]; then
+    tint_op="set"
+  elif [[ "$window_tint" == off ]]; then
+    # Only an explicit "off" removes colors: the user may have set their own.
+    tint_op="clear"
   fi
+  [[ "$icon_mode" != emoji ]] || title_op="set"
+  apply_window_settings "$tmp_app" "$profile_path" "$tint_op" "$color" "$title_op" "$icon_value" set ||
+    die "the disguise was not installed: $LAST_SETTINGS_ERROR (fix or move aside that file)"
+  apply_pinned_folder "$profile_path" "$folder_action" "$folder"
+  [[ -z "$window_tint" ]] || write_profile_setting "$profile_path" window-tint "$window_tint"
 
   mv "$tmp_app" "$app"
   installed=true
@@ -1783,20 +1600,18 @@ update_instance() {
   [[ -n "$color$icon_mode$folder_action$window_tint" ]] || die "nothing to update (see 'code-o-ween help')"
   validate_disguise_options
 
-  local app current_color kind family profile display_name rebuild=false
+  local app current_color kind profile display_name rebuild=false
   app="$(require_instance "$name")"
-  current_color="$(read_metadata "$app" color blue)"
+  current_color="$(read_metadata "$app" color "$DEFAULT_COLOR")"
   kind="$(read_metadata "$app" icon-kind image)"
-  family="$(family_for_app "$app")"
   profile="$(profile_for_app "$app" "$(read_metadata "$app" slug)")"
   display_name="$(name_for_app "$app")"
-  assert_vscode_only_options "$family" "$(label_for_app "$app")"
   # The recorded profile path is data from the bundle; the same guards as create apply before
   # anything is written there, on both the rebuild and the direct path.
   # claim_profile runs the same guards and recreates a missing folder with its marker; a
   # recreated VS Code profile also gets update.mode pinned again (a no-op otherwise).
   claim_profile "$profile" "$(read_metadata "$app" slug)"
-  [[ "$family" != vscode ]] || apply_window_settings "$app" "$profile" keep "" keep "" set || die "nothing was changed: $LAST_SETTINGS_ERROR"
+  apply_window_settings "$app" "$profile" keep "" keep "" set || die "nothing was changed: $LAST_SETTINGS_ERROR"
   [[ -n "$color" ]] || color="$current_color"
 
   [[ -z "$icon_mode" && "$color" == "$current_color" ]] || rebuild=true
@@ -1839,9 +1654,8 @@ list_instances() {
   while IFS= read -r -d '' app; do
     found="true"
     name="$(name_for_app "$app")"
-    color="$(read_metadata "$app" color blue)"
+    color="$(read_metadata "$app" color "$DEFAULT_COLOR")"
     mode="$(read_metadata "$app" extensions shared)"
-    [[ "$mode" != none ]] || mode="-"
     printf '%-18s %-24s %-8s %-10s %s\n' "$name" "$(label_for_app "$app")" "$color" "$mode" "$app"
     folder="$(read_profile_setting "$(profile_for_app "$app" "$(read_metadata "$app" slug)")" pinned-folder)"
     [[ -z "$folder" ]] || printf '%-18s %-24s %-8s %-10s %s\n' "" "" "" "" "↳ $folder"
@@ -1849,25 +1663,24 @@ list_instances() {
   [[ "$found" == "true" ]] || note "(no disguises yet)"
 }
 
-# Lists the recipes. --porcelain prints tab-separated: id, label, found (yes/no),
-# extensions (yes/no), source path.
+# Lists the recipes. --porcelain prints tab-separated: id, label, found (yes/no), source path,
+# status.
 list_kinds() {
   local porcelain="false" kind
   [[ "${1:-}" != "--porcelain" ]] || porcelain="true"
-  [[ "$porcelain" == "true" ]] || printf '%-16s %-30s %-18s %-17s %s\n' "APP" "NAME" "ISOLATION" "STATUS" "FOUND AT"
+  [[ "$porcelain" == "true" ]] || printf '%-16s %-30s %-17s %s\n' "APP" "NAME" "STATUS" "FOUND AT"
   for kind in $ALL_KINDS; do
     (
-      local source extensions="no" found="no"
+      local source found="no"
       load_kind "$kind"
       # die exits the substitution's subshell, so the fallback has to live outside it.
       if source="$(default_source_app 2>/dev/null)"; then found="yes"; else source=""; fi
-      [[ "$KIND_FAMILY" != vscode ]] || extensions="yes"
       if [[ "$porcelain" == "true" ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$KIND_LABEL" "$found" "$extensions" "$source" "$KIND_STATUS"
-      elif [[ "$kind" == generic ]]; then
-        printf '%-16s %-30s %-18s %-17s %s\n' "$kind" "$KIND_LABEL" "$(family_description "$KIND_FAMILY")" "$(status_description "$KIND_STATUS")" "(pass --source)"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$KIND_LABEL" "$found" "$source" "$KIND_STATUS"
+      elif [[ "$kind" == other ]]; then
+        printf '%-16s %-30s %-17s %s\n' "$kind" "$KIND_LABEL" "$(status_description "$KIND_STATUS")" "(pass --source)"
       else
-        printf '%-16s %-30s %-18s %-17s %s\n' "$kind" "$KIND_LABEL" "$(family_description "$KIND_FAMILY")" "$(status_description "$KIND_STATUS")" "${source:--}"
+        printf '%-16s %-30s %-17s %s\n' "$kind" "$KIND_LABEL" "$(status_description "$KIND_STATUS")" "${source:--}"
       fi
     )
   done
@@ -1881,8 +1694,7 @@ open_instance() {
   [[ "${1:-}" != "--" ]] || shift
   local slug app
   slug="$(slugify "$name")"
-  app="$(app_for_slug "$slug" || true)"
-  [[ -n "$app" ]] || die "disguise '$name' does not exist"
+  app="$(require_instance "$name")"
   if [[ $# -eq 0 ]]; then
     # The launcher opens the pinned folder only when the disguise starts. A disguise whose
     # last window was closed is still running, and activating it would only show an empty
@@ -1906,7 +1718,7 @@ open_instance() {
 rebuild_instance() {
   local app="$1" color="$2" icon_mode="$3" icon_value="$4" source="$5" kept_icon=""
   shift 5
-  [[ -n "$color" ]] || color="$(read_metadata "$app" color blue)"
+  [[ -n "$color" ]] || color="$(read_metadata "$app" color "$DEFAULT_COLOR")"
   [[ -n "$source" ]] || source="$(read_metadata "$app" source)"
   if [[ "$icon_mode" == keep ]]; then
     icon_mode="$(read_metadata "$app" icon-kind image)"
@@ -2011,8 +1823,7 @@ remove_instance() {
   done
   local slug app answer profile shortcut
   slug="$(slugify "$name")"
-  app="$(app_for_slug "$slug" || true)"
-  [[ -n "$app" ]] || die "disguise '$name' does not exist"
+  app="$(require_instance "$name")"
   shortcut="$(shortcut_for_app "$app" "$slug")"
   lock_slug "$(dirname "$app")" "$slug"
   trap unlock_slug EXIT
@@ -2050,7 +1861,7 @@ doctor() {
   local has_errors="false" kind found="false"
   if [[ "$(uname -s)" == "Darwin" ]]; then note "OK  macOS"; else note "ERR macOS is required"; has_errors="true"; fi
   for kind in $ALL_KINDS; do
-    [[ "$kind" != generic ]] || continue
+    [[ "$kind" != other ]] || continue
     if (load_kind "$kind"
         source="$(default_source_app 2>/dev/null)" || exit 1
         if (verify_source_app "$source" false "$KIND_TEAM_ID") >/dev/null 2>&1; then

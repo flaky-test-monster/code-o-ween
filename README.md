@@ -10,8 +10,8 @@
 Disguise VS Code and other Mac apps for trick or treat.
 
 Under the costume, each disguise is a genuinely separate copy of the app with its own Dock
-icon, ⌘-Tab entry, settings, sessions, and logins. Dress up Visual Studio Code, a browser,
-Slack, or almost any other app, in a Halloween costume, any emoji, or your own image.
+icon, ⌘-Tab entry, settings, sessions, and logins. Dress up Visual Studio Code, VS Code Insiders, VSCodium, or
+any other VS Code-style app in a Halloween costume, any emoji, or your own image.
 
 Website: [flaky-test-monster.github.io/code-o-ween](https://flaky-test-monster.github.io/code-o-ween/)
 
@@ -158,49 +158,34 @@ works without it.
 
 ## What can be disguised
 
-| App | `--app` | Status | How the disguise keeps its data apart |
-| --- | --- | --- | --- |
-| Visual Studio Code | `vscode` (default) | **verified** | `--user-data-dir`, optionally `--extensions-dir`, a Keychain item of its own, a terminal shortcut on the app's own CLI (`code-NAME`), and `update.mode` pinned to `none` so the copy never updates itself |
-| VS Code Insiders, VSCodium | `vscode-insiders`, `vscodium` | not yet verified | the same mechanism as VS Code; not yet run as disguises on a Mac |
-| Google Chrome, Chromium, Microsoft Edge, Brave | `chrome`, `chromium`, `edge`, `brave` | **not working** | `--user-data-dir=`; `create` refuses them, see below |
-| Firefox | `firefox` | not yet verified | `--profile` |
-| Slack, Discord, Obsidian | `slack`, `discord`, `obsidian` | not yet verified | a private `HOME`, so `~/Library` (settings, caches, preferences) is separate; Desktop, Documents, Downloads, Movies, Music, and Pictures are linked to the real folders |
-| Anything else | `--source /path/to/App.app` | not yet verified | a private `HOME`, as above |
+Code-o-ween dresses up VS Code-style apps: anything that ships VS Code's `product.json` and
+its command-line launcher inside the bundle.
+
+| App | `--app` | Status |
+| --- | --- | --- |
+| Visual Studio Code | `vscode` (default) | **verified** |
+| VS Code Insiders | `vscode-insiders` | not yet verified |
+| VSCodium | `vscodium` | not yet verified |
+| Any other VS Code-style app | `--source /path/to/App.app` | not yet verified |
 
 Every disguise is built the same way: the app bundle is cloned, a small launcher becomes its
-executable, and the copy gets its own bundle identifier, display name, icon, and ad-hoc
-signature. The original installation is never modified.
+executable and starts the app with `--user-data-dir` (and optionally `--extensions-dir`), and
+the copy gets its own bundle identifier, display name, icon, Keychain item, terminal shortcut,
+and ad-hoc signature, with `update.mode` pinned to `none` so it never updates itself. The
+original installation is never modified.
 
 `code-o-ween apps` lists the recipes with their status and where each app was found. With
-`--source` alone, the app is recognized from its bundle identifier; a VS Code-style app that is
-not in the list (a fork with its own name) gets the VS Code treatment, and anything else gets a
-private `HOME`.
+`--source` alone, the app is recognized from its bundle identifier; a fork under its own name
+is accepted as long as it is a VS Code-style app. Anything else is refused before copying.
 
-What the statuses mean:
+- **Verified** means the mechanism has been run end to end on macOS, including a real launch.
+- **Not yet verified** means the app has not been launched as a disguise on a Mac. Creating
+  one prints a warning. Treat it as a first cut and report what you see.
 
-- **Verified**: the VS Code mechanism has been run end to end on macOS, including a real
-  launch.
-- **Not yet verified**: the launcher and shortcut are generated and covered by
-  `tests/safety.sh`, but the app has not been launched as a disguise on a Mac. Creating one
-  prints a warning. Treat it as a first cut and report what you see.
-- **Not working**: Chromium-based browsers ship their framework several versions behind a
-  `Versions/Current` symlink, which cannot be re-signed by the means used here. The copy would
-  fail signature verification and macOS would refuse to open it, so `create` refuses the recipe
-  up front and leaves nothing behind.
-
-Only apps with a valid code signature are copied, and Visual Studio Code and Google Chrome
-must come from their publisher. For another build (for example VSCodium), pass
-`--source APP --trust-source`, or turn on **Trust this app's signature** in the manager, which
-is offered for "Other app…" and for recipes that are not yet verified.
-
-Keychain: only VS Code-style disguises get a Keychain item of their own. A disguised browser or
-Electron app keeps using the original app's `… Safe Storage` item, so macOS asks once per app
-version whether the copy may use it. Choose **Always Allow**; denying leaves the disguise unable
-to save logins.
-
-Sandboxed apps (App Store builds) keep their data in `~/Library/Containers/<bundle identifier>`,
-so the new identifier alone separates it. Re-signing drops the entitlements such apps may rely
-on, so prefer direct downloads.
+Only apps with a valid code signature are copied, and Visual Studio Code must come from
+Microsoft. For another build (for example VSCodium), pass `--source APP --trust-source`, or
+turn on **Trust this app's signature** in the manager, which is offered for "Other app…" and
+for recipes that are not yet verified.
 
 ## Pick a costume
 
@@ -214,17 +199,15 @@ The manager includes quick Halloween disguises:
 - 💀 Skeleton
 
 You can then change the emoji, pick one of 15 preset colors or any color with the color picker,
-or select a custom image. The manager's App picker lists code editors (the VS Code-style
-recipes) plus "Other app…"; browsers and chat apps are created from the command line.
+or select a custom image.
 
 ## Command-line examples
 
 ```bash
 code-o-ween create Cauldron --color orange --emoji "🎃" --extensions isolated
-code-o-ween create Personal --app chrome --color purple --emoji "👻"
-code-o-ween create Standup --app slack --color teal
+code-o-ween create Nightly --app vscode-insiders --color purple --emoji "👻"
 code-o-ween create Work --icon ~/Pictures/vampire-code.svg
-code-o-ween create Beta --source "/Applications/Some Other App.app"
+code-o-ween create Beta --source "/Applications/Some VS Code Fork.app"
 code-o-ween create Night --color "#1A1A2E" --emoji "🦇"
 code-o-ween create Cauldron --emoji "🎃" --folder ~/code/cauldron
 ```
@@ -235,7 +218,6 @@ their color, and show the emoji at the start of the window title. Turn the tint 
 
 `--folder` pins a project folder: opening the disguise from Finder, the Dock, or
 `code-o-ween open NAME` opens that folder. In the manager, use **Project folder → Choose…**.
-Both options apply to VS Code-style apps only, and are refused for others rather than ignored.
 
 Closing the last window does not quit a disguise on macOS. Clicking its Dock icon then shows an
 empty window, as VS Code does; **Open** in the manager and `code-o-ween open NAME` hand the
@@ -243,7 +225,7 @@ pinned folder to the running copy instead. Quit the disguise (⌘Q) to have the 
 folder again.
 
 `--extensions shared` uses your normal extensions. `--extensions isolated` gives the disguise a
-separate extension directory. Both apply to VS Code-style apps only.
+separate extension directory.
 
 SVG, PNG, JPEG, TIFF, WebP, and ready-made ICNS files are supported as icons. A square source
 is recommended; other formats are converted into the multi-resolution `.icns` format macOS
@@ -253,12 +235,11 @@ requires.
 `navy`, `magenta`, `indigo`, `brown`, `slate`, `purple`, `lime`, `yellow`, `orange`, `green`,
 `teal`, `red`, `blue`, and `pink` (`code-o-ween colors` lists them with their values). Every
 preset is dark enough for white text on the window tint (a contrast of at least 4.5:1). `blue`,
-`green`, `orange`, `pink`, `purple`, `red`, `teal`, and `yellow` have hand-made icons for
-VS Code-style apps; other colors get a drawn `</>` badge, and other apps wear their own icon on
-the colored tile.
+`green`, `orange`, `pink`, `purple`, `red`, `teal`, and `yellow` have hand-made icons; other
+colors get a drawn `</>` badge.
 
-Names must be unique across apps: "Work" cannot be both a Chrome and a VS Code disguise. They
-cannot start with `-` or contain control characters.
+Names must be unique across apps: "Work" cannot be both a VSCodium and a VS Code disguise.
+They cannot start with `-` or contain control characters.
 
 ## Change a disguise
 
@@ -290,12 +271,10 @@ a disguise is never installed without `update.mode` pinned.
 ```bash
 code-o-ween open Cauldron -- ~/code/cauldron
 code-cauldron ~/code/cauldron
-chrome-personal https://example.com
 ```
 
-Terminal shortcuts are named after the app: VS Code-style disguises get `code-NAME` (or
-`codium-NAME`, …), other apps get `chrome-NAME`, `slack-NAME`, and so on. They open the
-disguise and hand it any arguments, for example a path or a URL.
+Terminal shortcuts are named after the app's own command: `code-NAME`, `code-insiders-NAME`,
+`codium-NAME`, and so on. They behave like that command, pointed at the disguise's settings.
 
 Disguises live in:
 
@@ -359,9 +338,7 @@ code-o-ween --version
   IPC socket lives there). Settings folders carry a `.code-o-ween-profile` marker, and
   Code-o-ween refuses to use or delete a folder it did not create, a folder that is a symbolic
   link, and your home folder.
-- A disguise with a private `HOME` sees the linked folders (Desktop, Documents, …) but not
-  dotfiles such as `~/.ssh` or `~/.gitconfig`. This is why VS Code-style apps use
-  `--user-data-dir` instead.
+
 - APFS clones are used where possible, so disguises initially consume little additional disk
   space.
 - Commands take a per-disguise lock while they rebuild or remove it. A stale `.lock-NAME`
@@ -410,7 +387,7 @@ nothing about where the image came from.
 ## Contributing
 
 Issues and pull requests are welcome, especially reports from running the not-yet-verified
-recipes (Firefox, Slack, Discord, Obsidian, your own `--source`). Run `tests/safety.sh` and
+recipes (VS Code Insiders, VSCodium, or a fork through `--source`). Run `tests/safety.sh` and
 `shellcheck -x code-o-ween build-ui.sh build-dmg.sh install.sh tests/*.sh` before opening a
 pull request, and say which of the macOS tests you ran. Release notes are in
 [`CHANGELOG.md`](CHANGELOG.md).

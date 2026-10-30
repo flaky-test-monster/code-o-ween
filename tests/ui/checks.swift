@@ -90,14 +90,6 @@ MainActor.assumeIsolated {
     form.name = "--all"
     expect("names starting with '-' are rejected", !form.canCreate)
     expect("a new disguise starts with a custom costume", form.costume == Costume.custom)
-    func recipe(_ id: String, extensions: Bool) -> AppRecipe {
-        AppRecipe(id: id, label: id, isInstalled: true, supportsExtensions: extensions, source: "", status: "unverified")
-    }
-    expect("the app picker lists code editors only",
-           recipe("vscode", extensions: true).isCodeEditor && recipe("vscodium", extensions: true).isCodeEditor
-           && recipe(AppRecipe.other, extensions: false).isCodeEditor
-           && !recipe("slack", extensions: false).isCodeEditor && !recipe("chrome", extensions: false).isCodeEditor)
-
     edit.begin(store.instances.first!)
     edit.color = "teal"
     // The list, since one disguise exists; the create form on request, as "Add More…" shows it.

@@ -5,7 +5,7 @@ says how the code is put together and what must not break.
 
 ## What it is
 
-Code-o-ween clones a Mac app, gives the clone a new bundle identifier, display name, icon and
+Code-o-ween clones a VS Code-style app, gives the clone a new bundle identifier, display name, icon and
 ad-hoc signature, and starts it through a launcher that points it at its own settings folder.
 The result is a separate app to macOS: own Dock icon, own ⌘-Tab entry, own logins. The original
 app is never modified.
@@ -52,7 +52,7 @@ Each of these was learned the hard way. Keep them.
   disables library validation (re-signed executables no longer share the publisher's Team ID
   with their frameworks), removes `com.apple.security.cs.allow-dyld-environment-variables`, and
   verifies its own output. A source bundle must pass `codesign --verify --deep --strict`;
-  Visual Studio Code and Google Chrome are pinned to their publishers' Team IDs.
+  Visual Studio Code is pinned to Microsoft's Team ID.
 - **Electron needs `CFBundleName` and the original executable name** to find its helper apps.
   Only `CFBundleExecutable` (the launcher), `CFBundleIdentifier`, `CFBundleDisplayName` and the
   icon change. `CFBundleIconName` is removed so an asset catalog cannot override the icon.
@@ -65,16 +65,15 @@ Each of these was learned the hard way. Keep them.
 
 ## Recipes
 
-Each supported app is a recipe in `load_kind`: label, bundle name, bundle identifiers,
-optional Team ID, status, and an isolation *family* that decides how a copy keeps its data
-apart (`vscode`: `--user-data-dir`; `chromium`: `--user-data-dir=`; `firefox`: `--profile`;
-`home`: a private `HOME`). `ALL_KINDS` lists them. Adding an app means adding a case there;
-the launcher and shortcut generators (`write_launcher`, `write_shortcut`) switch on the family.
+Each supported app is a recipe in `load_kind`: label, bundle name, bundle identifiers, optional
+Team ID, and status. `ALL_KINDS` lists them: `vscode`, `vscode-insiders`, `vscodium`, and
+`other` for any VS Code-style fork passed with `--source`. All are isolated the same way
+(`--user-data-dir`, optional `--extensions-dir`, own Keychain item, shortcut on the bundled
+CLI); `create` refuses a bundle without `Resources/app/product.json` and `bin/` before copying.
 
 Recipe status is honest, not aspirational: `verified` only for Visual Studio Code, `unverified`
-for apps that have not been run as disguises on a Mac, `broken` for the Chromium family (its
-framework cannot be re-signed yet). `create` refuses a broken recipe before
-copying anything. Do not promote a status without having launched the disguise on a Mac.
+for apps that have not been run as disguises on a Mac. Do not promote a status without having
+launched the disguise on a Mac.
 
 ## Bash conventions
 
@@ -98,8 +97,8 @@ copying anything. Do not promote a status without having launched the disguise o
   `SwiftUIMacros`.
 - The CLI is found at `Contents/Resources/cli/code-o-ween` inside the app bundle. Its standard
   output and standard error are read separately, through a temporary file, so neither can block.
-- The App picker lists only code editors (recipes with an extensions directory) plus
-  "Other app…"; browsers and chat apps are CLI-only on purpose.
+- The App picker lists every recipe plus "Other app…", which must point at a VS Code-style
+  bundle before Create is enabled; the CLI checks again.
 
 ## Tests
 

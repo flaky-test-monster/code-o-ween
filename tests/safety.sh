@@ -25,7 +25,6 @@ write_metadata "$app" extensions isolated
 [[ "$(read_metadata "$app" profile)" == "$profile_path" ]]
 [[ "$(read_metadata "$app" missing fallback)" == fallback ]]
 [[ "$(kind_for_app "$app")" == vscode ]]
-[[ "$(family_for_app "$app")" == vscode ]]
 [[ "$(label_for_app "$app")" == "Visual Studio Code" ]]
 [[ "$(shortcut_for_app "$app" demo)" == code-demo ]]
 write_shortcut demo "$app"
@@ -48,14 +47,12 @@ if (profile_for_app "$app" demo) 2>/dev/null; then exit 1; fi
 # --- Generated launchers, executed against fake executables ---------------------------------
 fake_bin="$test_root/fakebin"
 mkdir -p "$fake_bin"
-for executable in Code "Google Chrome" firefox Slack; do
-  printf '#!/bin/bash\nprintf "%%s\\n" "$HOME" "$@"\n' >"$fake_bin/$executable"
-  chmod +x "$fake_bin/$executable"
-done
+printf '#!/bin/bash\nprintf "%%s\\n" "$HOME" "$@"\n' >"$fake_bin/Code"
+chmod +x "$fake_bin/Code"
 real_home="$test_root/realhome"
 mkdir -p "$real_home/Documents"
 
-write_launcher "$fake_bin/launch-code" Code "$test_root/data/code-demo" vscode isolated code-demo
+write_launcher "$fake_bin/launch-code" Code "$test_root/data/code-demo" isolated code-demo
 bash -n "$fake_bin/launch-code"
 grep -Fq '/"Code' "$fake_bin/launch-code"
 expected="$real_home"$'\n'"--user-data-dir"$'\n'"$test_root/data/code-demo/user-data"$'\n'"--extensions-dir"$'\n'"$test_root/data/code-demo/extensions"$'\n'"--foo"
@@ -68,123 +65,82 @@ grep -Fq '"update.mode": "none"' "$test_root/data/code-demo/user-data/User/setti
 # An existing folder the launcher does not own is refused, never claimed, never used.
 mkdir -p "$test_root/data/theirs"
 printf 'x' >"$test_root/data/theirs/README"
-write_launcher "$fake_bin/launch-theirs" Code "$test_root/data/theirs" vscode shared theirs
+write_launcher "$fake_bin/launch-theirs" Code "$test_root/data/theirs" shared theirs
 expect_fail env HOME="$real_home" "$fake_bin/launch-theirs"
 [[ ! -e "$test_root/data/theirs/.code-o-ween-profile" && ! -e "$test_root/data/theirs/user-data" ]] || fail "launcher used a folder it does not own"
 # A symlinked profile is refused too, even with a matching marker behind it.
 ln -s "$test_root/data/code-demo" "$test_root/data/code-link"
-write_launcher "$fake_bin/launch-link" Code "$test_root/data/code-link" vscode shared code-demo
+write_launcher "$fake_bin/launch-link" Code "$test_root/data/code-link" shared code-demo
 expect_fail env HOME="$real_home" "$fake_bin/launch-link"
 # Without a slug (no guard requested) the launcher behaves as before.
-write_launcher "$fake_bin/launch-code-shared" Code "$test_root/data/code-demo" vscode shared
+write_launcher "$fake_bin/launch-code-shared" Code "$test_root/data/code-demo" shared
 if grep -Fq -- '--extensions-dir' "$fake_bin/launch-code-shared"; then exit 1; fi
 # Electron's Node mode (used by the bundled CLI) bypasses the isolation arguments.
 [[ "$(ELECTRON_RUN_AS_NODE=1 HOME=/nowhere "$fake_bin/launch-code" x)" == "/nowhere"$'\n'"x" ]]
 
-write_launcher "$fake_bin/launch-chrome" "Google Chrome" "$test_root/data/chrome-demo" chromium
-bash -n "$fake_bin/launch-chrome"
-expected="$real_home"$'\n'"--user-data-dir=$test_root/data/chrome-demo/user-data"$'\n'"https://example.com"
-[[ "$(HOME="$real_home" "$fake_bin/launch-chrome" https://example.com)" == "$expected" ]]
-
-write_launcher "$fake_bin/launch-firefox" firefox "$test_root/data/firefox-demo" firefox
-expected="$real_home"$'\n'"--profile"$'\n'"$test_root/data/firefox-demo/profile"
-[[ "$(HOME="$real_home" "$fake_bin/launch-firefox")" == "$expected" ]]
-[[ -d "$test_root/data/firefox-demo/profile" ]]
-
-write_launcher "$fake_bin/launch-slack" Slack "$test_root/data/slack-demo" home
-bash -n "$fake_bin/launch-slack"
-expected="$test_root/data/slack-demo/home"$'\n'"--flag"$'\n'"one"
-[[ "$(HOME="$real_home" "$fake_bin/launch-slack" --flag one)" == "$expected" ]]
-[[ -L "$test_root/data/slack-demo/home/Documents" ]]
-[[ "$(readlink "$test_root/data/slack-demo/home/Documents")" == "$real_home/Documents" ]]
-[[ ! -e "$test_root/data/slack-demo/home/Library" && ! -e "$test_root/data/slack-demo/home/Pictures" ]]
-# Running it again must not fail on the existing links.
-[[ "$(HOME="$real_home" "$fake_bin/launch-slack" again)" == "$test_root/data/slack-demo/home"$'\n'"again" ]]
-if (write_launcher "$fake_bin/launch-bad" Slack "$test_root/data/x" nonsense) 2>/dev/null; then exit 1; fi
-
-# --- Shortcuts for apps without a bundled CLI -----------------------------------------------
-chrome_app="$test_root/Chrome - Demo.app"
-mkdir -p "$chrome_app/Contents/Resources"
-write_metadata "$chrome_app" slug chrome-demo
-write_metadata "$chrome_app" family chromium
-write_metadata "$chrome_app" shortcut chrome-chrome-demo
-[[ "$(shortcut_for_app "$chrome_app" chrome-demo)" == chrome-chrome-demo ]]
-write_shortcut chrome-demo "$chrome_app"
-bash -n "$BIN_ROOT/chrome-chrome-demo"
-grep -Fq '# Managed by Code-o-ween: chrome-demo' "$BIN_ROOT/chrome-chrome-demo"
-grep -Fq '/usr/bin/open -n -a' "$BIN_ROOT/chrome-chrome-demo"
-grep -Fq 'Chrome\ -\ Demo.app --args "$@"' "$BIN_ROOT/chrome-chrome-demo"
-if grep -Fq -- '--user-data-dir' "$BIN_ROOT/chrome-chrome-demo"; then exit 1; fi
-
 # --- Recipes --------------------------------------------------------------------------------
-[[ "$(kind_for_bundle_id com.google.Chrome)" == chrome ]]
+[[ "$(kind_for_bundle_id com.microsoft.VSCode)" == vscode ]]
 [[ "$(kind_for_bundle_id com.microsoft.VSCodeInsiders)" == vscode-insiders ]]
-[[ "$(kind_for_bundle_id md.obsidian)" == obsidian ]]
 if kind_for_bundle_id com.example.unknown; then exit 1; fi
 if kind_for_bundle_id ""; then exit 1; fi
-(load_kind slack; [[ "$KIND_FAMILY" == home && "$KIND_SHORTCUT" == slack && "$KIND_PREFIX" == Slack ]])
-(load_kind vscodium; [[ "$KIND_FAMILY" == vscode && "$KIND_CANDIDATES" == VSCodium.app ]])
+(load_kind vscodium; [[ "$KIND_CANDIDATES" == VSCodium.app && "$KIND_STATUS" == unverified ]])
 if (load_kind nonsense) 2>/dev/null; then exit 1; fi
 [[ "$(source_env_name vscode-insiders)" == CODE_O_WEEN_VSCODE_INSIDERS_APP ]]
 (load_kind vscode; [[ "$(CODE_O_WEEN_VSCODE_APP=/x/Code.app default_source_app)" == /x/Code.app ]])
 (load_kind vscode; [[ "$(VSCODE_APP=/y/Code.app default_source_app)" == /y/Code.app ]])
-(load_kind edge; [[ "$(CODE_O_WEEN_EDGE_APP=/z/Edge.app default_source_app)" == /z/Edge.app ]])
-if (load_kind generic; default_source_app) 2>/dev/null; then exit 1; fi
+(load_kind vscodium; [[ "$(CODE_O_WEEN_VSCODIUM_APP=/z/VSCodium.app default_source_app)" == /z/VSCodium.app ]])
+if (load_kind other; default_source_app) 2>/dev/null; then exit 1; fi
 # Captured first: grep -q closing the pipe early would turn into SIGPIPE under pipefail.
 porcelain="$(list_kinds --porcelain)"
-[[ "$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')" == 14 ]]
+[[ "$(printf '%s\n' "$porcelain" | wc -l | tr -d ' ')" == 4 ]]
 # Field 3 says whether the app is installed on this machine, so it is not asserted here.
-[[ "$(awk -F'\t' '$1=="chrome"{print $2"|"$4"|"$6}' <<<"$porcelain")" == "Google Chrome|no|broken" ]] || fail "chrome recipe row"
-[[ "$(awk -F'\t' '$1=="vscode"{print $2"|"$4"|"$6}' <<<"$porcelain")" == "Visual Studio Code|yes|verified" ]] || fail "vscode recipe row"
-[[ "$(awk -F'\t' '$1=="slack"{print $6}' <<<"$porcelain")" == "unverified" ]] || fail "slack recipe status"
-grep -Fq 'not working' <<<"$(list_kinds)"
-(load_kind edge; [[ "$KIND_STATUS" == broken ]]; expect_fail assert_kind_usable)
+[[ "$(awk -F'\t' '$1=="vscode"{print $2"|"$5}' <<<"$porcelain")" == "Visual Studio Code|verified" ]] || fail "vscode recipe row"
+[[ "$(awk -F'\t' '$1=="vscodium"{print $5}' <<<"$porcelain")" == "unverified" ]] || fail "vscodium recipe status"
+grep -Fq 'not yet verified' <<<"$(list_kinds)"
 (load_kind vscode; [[ "$KIND_STATUS" == verified ]]; assert_kind_usable 2>/dev/null)
-(load_kind firefox; [[ "$KIND_STATUS" == unverified ]]; assert_kind_usable 2>/dev/null)
-grep -Fq 'private HOME' <<<"$(list_kinds)"
-# The generic recipe takes its names from the bundle and recognizes VS Code-style apps.
+(load_kind vscode-insiders; [[ "$KIND_STATUS" == unverified ]]; assert_kind_usable 2>/dev/null)
+# The other recipe takes its names from the bundle; only VS Code-style bundles qualify.
 tool_app="$test_root/Some Tool.app"
 mkdir -p "$tool_app/Contents/Resources/app/bin"
 printf '{}' >"$tool_app/Contents/Resources/app/product.json"
-(configure_kind_for_source generic "$tool_app"
-  [[ "$KIND_LABEL" == "Some Tool" && "$KIND_PREFIX" == "Some Tool" && "$KIND_SHORTCUT" == some-tool && "$KIND_FAMILY" == vscode ]])
+(configure_kind_for_source other "$tool_app"; [[ "$KIND_LABEL" == "Some Tool" && "$KIND_PREFIX" == "Some Tool" ]])
+is_vscode_style_app "$tool_app"
 plain_app="$test_root/Plain.app"
 mkdir -p "$plain_app/Contents/Resources"
-(configure_kind_for_source generic "$plain_app"; [[ "$KIND_FAMILY" == home && "$KIND_PREFIX" == Plain ]])
-(configure_kind_for_source chrome "$plain_app"; [[ "$KIND_FAMILY" == chromium && "$KIND_PREFIX" == Chrome ]])
-[[ "$(detect_kind "$plain_app")" == generic ]]
+expect_fail is_vscode_style_app "$plain_app"
+[[ "$(detect_kind "$plain_app")" == other ]]
 
 # --- Discovery of disguises in the app folder ---------------------------------------------
-mkdir -p "$APP_ROOT/Chrome - Work.app/Contents/Resources"
-write_metadata "$APP_ROOT/Chrome - Work.app" slug work
-write_metadata "$APP_ROOT/Chrome - Work.app" name Work
-write_metadata "$APP_ROOT/Chrome - Work.app" kind chrome
-write_metadata "$APP_ROOT/Chrome - Work.app" label "Google Chrome"
-write_metadata "$APP_ROOT/Chrome - Work.app" extensions none
+mkdir -p "$APP_ROOT/VSCodium - Work.app/Contents/Resources"
+write_metadata "$APP_ROOT/VSCodium - Work.app" slug work
+write_metadata "$APP_ROOT/VSCodium - Work.app" name Work
+write_metadata "$APP_ROOT/VSCodium - Work.app" kind vscodium
+write_metadata "$APP_ROOT/VSCodium - Work.app" label "VSCodium"
+write_metadata "$APP_ROOT/VSCodium - Work.app" extensions shared
 mkdir -p "$APP_ROOT/VS Code - Old.app/Contents/Resources"
 write_metadata "$APP_ROOT/VS Code - Old.app" slug old
-[[ "$(app_for_slug work)" == "$APP_ROOT/Chrome - Work.app" ]]
+[[ "$(app_for_slug work)" == "$APP_ROOT/VSCodium - Work.app" ]]
 [[ "$(find_instances | tr -cd '\0' | wc -c | tr -d ' ')" == 2 ]] || fail "two disguises expected"
 # One command per disguise at a time.
 (lock_slug "$test_root" demo; expect_fail lock_slug "$test_root" demo; unlock_slug; lock_slug "$test_root" demo; unlock_slug)
 [[ ! -e "$test_root/.lock-demo" ]] || fail "lock not released"
 # A symlinked app root is followed, so disguises created through it are found again.
 ln -s "$APP_ROOT" "$test_root/apps-link"
-(APP_ROOT="$test_root/apps-link"; [[ "$(app_for_slug work)" == "$test_root/apps-link/Chrome - Work.app" ]]) || fail "symlinked app root not followed"
+(APP_ROOT="$test_root/apps-link"; [[ "$(app_for_slug work)" == "$test_root/apps-link/VSCodium - Work.app" ]]) || fail "symlinked app root not followed"
 # A slug that is not a slug is never looked up.
 if app_for_slug -- "--all" 2>/dev/null || app_for_slug "--all" 2>/dev/null; then fail "invalid slug looked up"; fi
 # Two bundles with one slug are an error, not a coin toss.
-mkdir -p "$APP_ROOT/Chrome - Work Copy.app/Contents/Resources"
-write_metadata "$APP_ROOT/Chrome - Work Copy.app" slug work
+mkdir -p "$APP_ROOT/VSCodium - Work Copy.app/Contents/Resources"
+write_metadata "$APP_ROOT/VSCodium - Work Copy.app" slug work
 expect_fail app_for_slug work
-rm -rf -- "$APP_ROOT/Chrome - Work Copy.app"
+rm -rf -- "$APP_ROOT/VSCodium - Work Copy.app"
 [[ "$(app_for_slug old)" == "$APP_ROOT/VS Code - Old.app" ]]
 if app_for_slug missing; then exit 1; fi
 # A bundle that records no kind or name is a VS Code disguise named after its bundle.
 [[ "$(kind_for_app "$APP_ROOT/VS Code - Old.app")" == vscode ]]
 [[ "$(name_for_app "$APP_ROOT/VS Code - Old.app")" == "VS Code - Old" ]]
 listing="$(list_instances)"
-[[ "$listing" == *"Work"*"Google Chrome"*"-"* && "$listing" == *"VS Code - Old"*"Visual Studio Code"* ]]
+[[ "$listing" == *"Work"*"VSCodium"*"shared"* && "$listing" == *"VS Code - Old"*"Visual Studio Code"* ]]
 
 # --- Names, colors, folders -----------------------------------------------------------------
 validate_name "Cauldron 2 🎃"
@@ -207,15 +163,6 @@ apply_pinned_folder "$test_root/profile" set "$test_root/pin me"
 [[ "$(read_profile_setting "$test_root/profile" pinned-folder)" == "$test_root/pin me" ]] || fail "pin folder"
 apply_pinned_folder "$test_root/profile" clear
 [[ -z "$(read_profile_setting "$test_root/profile" pinned-folder)" ]] || fail "unpin folder"
-
-# --- Options that only apply to VS Code-style apps ------------------------------------------
-(folder_action=set window_tint=""; assert_vscode_only_options vscode "Visual Studio Code")
-(folder_action=""; window_tint=on; assert_vscode_only_options vscode "Visual Studio Code")
-# The sourced function reads these two.
-# shellcheck disable=SC2034
-(folder_action="set"; window_tint=""; expect_fail assert_vscode_only_options chromium "Google Chrome")
-# shellcheck disable=SC2034
-(folder_action=""; window_tint="on"; expect_fail assert_vscode_only_options home "Slack")
 
 # --- Settings folders: socket length, home folder, and ownership ----------------------------
 assert_socket_path_fits "/Users/someone/.code-o-ween/demo"
@@ -264,4 +211,4 @@ expect_fail claim_profile "$test_root/fresh-link" fresh
 expect_fail assert_profile_ours "$test_root/fresh-link" fresh delete
 assert_profile_ours "$test_root/fresh" fresh delete
 
-printf 'PASS: profile persistence and ownership, metadata, shortcut ownership, symlink rejection, launchers for every family, recipes, discovery across folders, names, colors, folders, socket path limit\n'
+printf 'PASS: profile persistence and ownership, metadata, shortcut ownership, symlink rejection, generated launchers, recipes, discovery across folders, names, colors, folders, socket path limit\n'
