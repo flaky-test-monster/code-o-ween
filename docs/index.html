@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en" class="page-scroll">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Code-o-ween</title>
+  <meta name="description" content="Turn VS Code into separate macOS apps: own Dock icon, ⌘-Tab entry, and logins per project.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#140e20">
+  <link rel="canonical" href="https://flaky-test-monster.github.io/code-o-ween/">
+  <meta property="og:title" content="Code-o-ween 🎃">
+  <meta property="og:description" content="Give your VS Code a costume. Then wonder whether you should have.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://flaky-test-monster.github.io/code-o-ween/">
+  <meta property="og:site_name" content="Code-o-ween">
+  <meta property="og:image" content="https://flaky-test-monster.github.io/code-o-ween/social.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Code-o-ween: a spooky fake Mac desktop with a browser window and a Dock of costumed VS Code icons">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="apple-touch-icon" href="code-o-ween.png">
+  <link rel="icon" href="code-o-ween.png">
+  <link rel="stylesheet" href="style.css">
+  <!-- Page-view counts (GoatCounter: no cookies, no personal data). -->
+  <script data-goatcounter="https://kertal.goatcounter.com/count"
+          async src="https://gc.zgo.at/count.js"></script>
+</head>
+<body>
+
+<!-- ─────────────────────────── The desktop ─────────────────────────── -->
+<div class="desktop" id="desktop">
+
+  <div class="sky" aria-hidden="true">
+    <span class="moon"></span>
+    <span class="bat">🦇</span><span class="bat">🦇</span><span class="bat">🦇</span>
+  </div>
+
+  <!-- Menu bar -->
+  <div class="menubar" aria-hidden="true">
+    <ul class="menubar-left">
+      <li class="menubar-logo">🎃</li>
+      <li class="menubar-app" id="menubar-app">Haunter</li>
+      <li class="menubar-item">Brew</li>
+      <li class="menubar-item">Hex</li>
+      <li class="menubar-item">Gaze</li>
+      <li class="menubar-item">Summon</li>
+      <li class="menubar-item">Portal</li>
+      <li class="menubar-item">Scream</li>
+    </ul>
+    <ul class="menubar-right">
+      <li class="menubar-glyph" title="Not connected. Nothing here phones home.">
+        <svg viewBox="0 0 16 12" width="16" height="12"><path d="M8 11.2a1.3 1.3 0 1 1 0-2.6 1.3 1.3 0 0 1 0 2.6zM4.9 7.6a4.5 4.5 0 0 1 6.2 0l-1 1a3.1 3.1 0 0 0-4.2 0zM2.3 5a8.1 8.1 0 0 1 11.4 0l-1 1a6.7 6.7 0 0 0-9.4 0zM0 2.6A11.4 11.4 0 0 1 16 2.6l-1 1a10 10 0 0 0-14 0z" fill="currentColor"/></svg>
+      </li>
+      <li class="menubar-battery" title="Battery at −13%. It has been draining since 2019."><span class="battery-pct">−13%</span><span class="battery"><i></i></span></li>
+      <li class="menubar-clock"><time id="clock" datetime="2026-10-31T23:59">Fri Oct 31  23:59</time></li>
+    </ul>
+  </div>
+
+  <!-- A sticky note, because every desk has one nobody wrote -->
+  <aside class="sticky" id="sticky" aria-label="Note">
+    <button type="button" class="sticky-close" id="sticky-close" aria-label="Close note">×</button>
+    <p><strong>Welcome to the Code-o-ween crypt.</strong></p>
+    <p>Click anything in the Dock. Nothing installs.</p>
+    <p class="sticky-small">— a note from a machine that was never alive</p>
+  </aside>
+
+  <!-- ─────────────────────────── Windows ─────────────────────────── -->
+  <div class="windows" id="windows">
+
+    <!-- Haunter, the file browser: ~/Applications/Code-o-ween -->
+    <section class="window finder" data-app="finder" data-title="Haunter" hidden aria-label="Haunter — Code-o-ween">
+      <div class="titlebar">
+        <span class="lights"><button type="button" class="tl close" aria-label="Close"></button><button type="button" class="tl min" aria-label="Minimize"></button><button type="button" class="tl zoom" aria-label="Zoom"></button></span>
+        <span class="title"><span class="title-icon" aria-hidden="true">📁</span>Code-o-ween</span>
+      </div>
+      <div class="finder-body">
+        <nav class="finder-sidebar" aria-label="Haunts">
+          <p class="finder-group">Haunts</p>
+          <span class="finder-fav">🕯️ Recently Buried</span>
+          <span class="finder-fav">⚰️ Apparitions</span>
+          <span class="finder-fav active" aria-current="true">🎃 Code-o-ween</span>
+          <span class="finder-fav">🪦 Graveyard</span>
+          <span class="finder-fav">🕳️ The Pit</span>
+          <p class="finder-group">Cursed</p>
+          <span class="finder-fav">🕸️ node_modules</span>
+        </nav>
+        <div class="finder-main">
+          <div class="finder-items" id="finder-items"></div>
+          <p class="finder-hint">Each is a separately signed app from the same source. Click one to open it.</p>
+        </div>
+      </div>
+      <div class="finder-pathbar">Haunted HD › Users › you › Applications › <strong>Code-o-ween</strong></div>
+    </section>
+
+    <!-- Code-o-ween itself: the SwiftUI manager -->
+    <section class="window manager" data-app="code-o-ween" data-title="Code-o-ween" hidden aria-label="Code-o-ween">
+      <div class="titlebar">
+        <span class="lights"><button type="button" class="tl close" aria-label="Close"></button><button type="button" class="tl min" aria-label="Minimize"></button><button type="button" class="tl zoom" aria-label="Zoom"></button></span>
+        <span class="title">Code-o-ween</span>
+      </div>
+      <div class="manager-body">
+        <!-- The list, shown while there is something to list -->
+        <div class="manager-list" id="manager-list">
+          <div class="manager-list-head">
+            <h2>Disguises</h2>
+            <button type="button" class="icon-btn" id="reload-list" aria-label="Reload list" title="Reload list">⟳</button>
+          </div>
+          <ul class="instance-list" id="instance-list" aria-label="Disguises"></ul>
+          <div class="manager-list-actions">
+            <button type="button" class="mac-btn primary" id="add-more">＋ Add More…</button>
+            <span class="spacer"></span>
+            <button type="button" class="mac-btn" id="refresh-all">Refresh All</button>
+          </div>
+          <p class="status" id="list-status" aria-live="polite">Ready for trick or treat</p>
+        </div>
+
+        <!-- The create form, shown after "Add More…" (and by itself while there is nothing to list) -->
+        <form class="manager-form" id="create-form" autocomplete="off" hidden>
+          <div class="manager-form-head">
+            <img src="code-o-ween.png" alt="" width="64" height="64">
+            <div>
+              <h2>Dress up your editor</h2>
+              <p>A costume, its own Dock icon, and its own settings.</p>
+            </div>
+          </div>
+
+          <div class="grouped">
+            <label class="row"><span>App</span>
+              <select id="f-app">
+                <option>Visual Studio Code</option>
+                <option>VS Code Insiders</option>
+                <option>VSCodium</option>
+                <option>Other app…</option>
+              </select>
+            </label>
+            <label class="row"><span>Name</span><input id="f-name" type="text" placeholder="Side Project C" maxlength="40"></label>
+            <label class="row"><span>Costume</span>
+              <select id="f-costume">
+                <option value="Custom" data-emoji="" data-color="">Custom</option>
+                <option value="Pumpkin" data-emoji="🎃" data-color="#BF4F00">🎃  Pumpkin</option>
+                <option value="Ghost" data-emoji="👻" data-color="#7E57C2">👻  Ghost</option>
+                <option value="Vampire" data-emoji="🧛" data-color="#D13C3C">🧛  Vampire</option>
+                <option value="Witch" data-emoji="🧙" data-color="#1E8255">🧙  Witch</option>
+                <option value="Spider" data-emoji="🕷️" data-color="#007F88">🕷️  Spider</option>
+                <option value="Skeleton" data-emoji="💀" data-color="#D33682">💀  Skeleton</option>
+              </select>
+            </label>
+            <label class="row"><span>Icon</span>
+              <select id="f-icon"><option>Emoji</option><option>Default</option><option>Image</option></select>
+            </label>
+            <div class="row emoji-row" id="emoji-row">
+              <span>Emoji</span>
+              <span class="emoji-picker">
+                <span class="emoji-picker-head">
+                  <input id="f-emoji" type="text" value="🎃" aria-label="Emoji" maxlength="4" class="emoji-field">
+                  <button type="button" class="mac-btn small" id="f-more-emoji" title="Pick any emoji from the system palette">More…</button>
+                </span>
+                <span class="emoji-grid" id="emoji-grid" role="radiogroup" aria-label="Suggested emoji"></span>
+              </span>
+            </div>
+            <div class="row color-row"><span>Color</span>
+              <span class="swatches" id="swatches" role="radiogroup" aria-label="Color"></span>
+            </div>
+            <div class="row"><label for="f-folder">Project folder</label>
+              <span class="row-controls">
+                <input id="f-folder" type="text" placeholder="Optional: opens when launched">
+                <button type="button" class="mac-btn small" id="f-choose">Choose…</button>
+              </span>
+            </div>
+            <label class="row toggle-row"><span>Tint the VS Code window with this color</span><input type="checkbox" id="f-tint" class="switch" checked></label>
+            <label class="row toggle-row"><span>Use a separate extension directory</span><input type="checkbox" id="f-ext" class="switch"></label>
+          </div>
+
+          <div class="manager-form-actions">
+            <button type="button" class="mac-btn" id="cancel-create">Cancel</button>
+            <span class="spacer"></span>
+            <button type="submit" class="mac-btn primary" id="create">Disguise VS Code</button>
+          </div>
+          <p class="status" id="status" aria-live="polite">Ready. This is a web page; nothing touches your computer.</p>
+        </form>
+      </div>
+    </section>
+
+    <!-- The browser: the old landing page, now a web page inside the desktop. Not a landmark: its <main> is the page's. -->
+    <div class="window browser" data-app="browser" data-title="Cobweb">
+      <div class="titlebar browser-chrome">
+        <span class="lights"><button type="button" class="tl close" aria-label="Close"></button><button type="button" class="tl min" aria-label="Minimize"></button><button type="button" class="tl zoom" aria-label="Zoom"></button></span>
+        <span class="nav" aria-hidden="true"><i>‹</i><i>›</i></span>
+        <span class="address" aria-hidden="true"><span class="lock">🔒</span><span class="host">flaky-test-monster.github.io/code-o-ween</span></span>
+        <span class="nav" aria-hidden="true"><i>⤴</i><i>＋</i></span>
+      </div>
+      <div class="browser-tabs" aria-hidden="true"><span class="tab active">🎃 Code-o-ween</span><span class="tab">👻 how to delete 900 MB</span><span class="tab">🕸️ is this a trick</span></div>
+
+      <div class="web" id="web">
+        <header class="web-hero">
+          <p class="eyebrow">A macOS tool of questionable necessity</p>
+          <h1>Code-o-ween <span aria-hidden="true">🎃</span></h1>
+          <p class="tagline">Give your VS Code a costume. Then wonder whether you should have.</p>
+
+          <div class="warning" role="note">
+            <strong>Please don't install this.</strong>
+            Trick or treat? We can't tell yet.
+            <span class="verdict" id="verdict" aria-live="polite">Current reading: inconclusive.</span>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn primary" id="ask">Should I install it?</button>
+            <a class="btn" href="https://github.com/flaky-test-monster/code-o-ween" rel="noopener" target="_blank">Look at the code instead</a>
+          </div>
+        </header>
+
+        <main>
+          <section class="card" id="by-hand">
+            <h2>The honest way: by hand</h2>
+            <p>
+              Goal: two VS Codes that macOS treats as two apps — two Dock icons, two ⌘-Tab entries, two sets of
+              logins. Profiles can't do that; they switch inside <em>one</em> app. The lightest version needs no copy:
+            </p>
+            <pre tabindex="0"><code>alias code-side-a='code --user-data-dir ~/.vscode-side-a --extensions-dir ~/.vscode-side-a/extensions'</code></pre>
+            <p>Separate settings, extensions and logins, but still one "Code" in the Dock. Undo: delete <code>~/.vscode-side-a</code>.</p>
+            <p>The full costume takes six steps:</p>
+            <ol class="steps">
+              <li><strong>Clone</strong> the app with <code>cp -cR</code> into <code>~/Applications</code>. Free on APFS, ~900&nbsp;MB after the next update.</li>
+              <li><strong>Add a launcher</strong> that passes <code>--user-data-dir</code> (and optionally <code>--extensions-dir</code>).</li>
+              <li><strong>New identity</strong>: change <code>CFBundleIdentifier</code> and display name in <code>Info.plist</code>. Leave <code>CFBundleName</code> alone.</li>
+              <li><strong>Own Keychain item</strong>: rename <code>"name"</code> in the copy's <code>package.json</code>.</li>
+              <li><strong>Re-sign ad hoc</strong> with <code>codesign</code>, and swap the icon.</li>
+              <li><strong>Disable updates</strong> with <code>"update.mode": "none"</code>. Repeat after every VS Code update.</li>
+            </ol>
+            <p class="muted">
+              Exact commands and cleanup:
+              <a href="https://github.com/flaky-test-monster/code-o-ween#love-the-idea-but-afraid-very-afraid-to-run-it" rel="noopener" target="_blank">README, by hand</a>.
+              Transcribed from the script, not separately tested.
+            </p>
+          </section>
+
+          <section class="card quick">
+            <h2>The quick way, for the mad</h2>
+            <p>
+              Code-o-ween does the six steps for you: pick a name, an emoji, a color. Each clone gets its
+              <strong>own Dock icon</strong>, <strong>⌘-Tab entry</strong>, <strong>GitHub and Microsoft logins</strong>,
+              and settings. To macOS they are different programs, because they are.
+            </p>
+            <p class="muted">
+              Try it: click a costume in the Dock below, or open
+              <button type="button" class="link-btn" data-open="code-o-ween">Code-o-ween</button> and make another. Nothing here touches your computer.
+            </p>
+          </section>
+
+          <section class="columns">
+            <div class="card treat">
+              <h2><span aria-hidden="true">🍬</span> Treat</h2>
+              <ul>
+                <li>Separate Dock icons and ⌘-Tab entries.</li>
+                <li>Separate logins per project.</li>
+                <li>Tinted title bar and emoji, so you know where you are.</li>
+                <li>Pin a folder: open the app, get the project.</li>
+                <li>Your real VS Code stays untouched.</li>
+              </ul>
+            </div>
+            <div class="card trick">
+              <h2><span aria-hidden="true">🕸️</span> Trick</h2>
+              <ul>
+                <li>It's a re-signed clone. A careful hack, still a hack.</li>
+                <li>~900&nbsp;MB per disguise after updates.</li>
+                <li>Every VS Code update: <code>code-o-ween refresh --all</code>.</li>
+                <li>One Keychain prompt per disguise.</li>
+                <li>Tested on one Mac. Chrome doesn't work; others untried.</li>
+              </ul>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Three costumes, zero context switches</h2>
+            <div class="trio">
+              <div class="trio-item" style="--tile:#BF4F00">
+                <span class="trio-icon" aria-hidden="true">🎃</span>
+                <h3>Main Project</h3>
+                <p>Pays the rent. Allegedly.</p>
+              </div>
+              <div class="trio-item" style="--tile:#7E57C2">
+                <span class="trio-icon" aria-hidden="true">👻</span>
+                <h3>Side Project A</h3>
+                <p>A todo app, "almost done" since 2019.</p>
+              </div>
+              <div class="trio-item" style="--tile:#D13C3C">
+                <span class="trio-icon" aria-hidden="true">🧛</span>
+                <h3>Side Project B</h3>
+                <p>Has a domain, so it's a company.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>If you must</h2>
+            <p>Clone the <a href="https://github.com/flaky-test-monster/code-o-ween" rel="noopener" target="_blank">repository</a>, then in Terminal:</p>
+            <pre tabindex="0"><code>./install.sh
+code-o-ween gui</code></pre>
+            <p>Or from the command line:</p>
+            <pre tabindex="0"><code>code-o-ween create "Main Project"   --emoji 🎃 --color orange --folder ~/code/main-project
+code-o-ween create "Side Project A" --emoji 👻 --color purple --folder ~/code/haunted-todo
+code-o-ween create "Side Project B" --emoji 🧛 --color red    --folder ~/code/spooky.dev</code></pre>
+          </section>
+
+          <section class="card plain">
+            <h2>Do you even need this?</h2>
+            <p>
+              For different settings and extensions, use VS Code's built-in <strong>Profiles</strong>
+              (File → New Profile). Code-o-ween only adds what Profiles can't: a <em>separate app</em> with its own
+              icon, ⌘-Tab slot, and logins. Still keen? Read the
+              <a href="https://github.com/flaky-test-monster/code-o-ween#readme" rel="noopener" target="_blank">README</a> first.
+            </p>
+          </section>
+        </main>
+
+        <footer class="web-footer">
+          <p>
+            Not affiliated with Microsoft, Apple, or pumpkins.
+            <a href="https://github.com/flaky-test-monster/code-o-ween" rel="noopener" target="_blank">github.com/flaky-test-monster/code-o-ween</a>
+          </p>
+          <p class="legal">Visual Studio Code is a trademark of Microsoft Corporation. macOS is a trademark of Apple Inc. Code-o-ween is not made or endorsed by either.</p>
+        </footer>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ─────────────────────────── The Dock ─────────────────────────── -->
+  <nav class="dock-wrap" aria-label="Dock">
+    <div class="dock" id="dock" role="toolbar">
+      <button type="button" class="dock-item" data-app="finder" aria-label="Haunter — file browser">
+        <span class="icon finder-icon" aria-hidden="true"><i class="face"></i></span>
+        <span class="dock-label">Haunter</span><span class="dock-dot"></span>
+      </button>
+      <span class="dock-sep" aria-hidden="true"></span>
+      <!-- Disguised VS Codes are inserted here by script.js -->
+      <span class="dock-sep" aria-hidden="true" id="dock-sep-apps"></span>
+      <button type="button" class="dock-item" data-app="code-o-ween" aria-label="Code-o-ween">
+        <span class="icon app-icon" aria-hidden="true"><img src="code-o-ween.png" alt="" width="52" height="52"></span>
+        <span class="dock-label">Code-o-ween</span><span class="dock-dot"></span>
+      </button>
+      <button type="button" class="dock-item" data-app="browser" aria-label="Cobweb — web browser">
+        <span class="icon browser-icon" aria-hidden="true"><i class="spider">🕷️</i></span>
+        <span class="dock-label">Cobweb</span><span class="dock-dot"></span>
+      </button>
+      <span class="dock-sep" aria-hidden="true"></span>
+      <button type="button" class="dock-item" data-app="trash" aria-label="Crypt">
+        <span class="icon trash-icon" aria-hidden="true">⚰️</span>
+        <span class="dock-label">Crypt (900 MB per costume)</span><span class="dock-dot"></span>
+      </button>
+    </div>
+  </nav>
+
+</div>
+
+<!-- What the coffin is hiding: a stop error from an operating system that is not the one you are using -->
+<div class="bsod" id="bsod" role="alertdialog" aria-modal="true" aria-labelledby="bsod-title" aria-describedby="bsod-body" hidden>
+  <div class="bsod-screen">
+    <p class="bsod-title" id="bsod-title"><span>Windoze</span></p>
+    <div id="bsod-body">
+      <p>Fatal exception 0E: this OS was caught disguised as another OS.</p>
+      <p>It was never a Mac. Just a web page in costume.</p>
+      <p>*&nbsp; Press any key to unsee this.</p>
+      <p class="bsod-code">STOP: 0x0000DEAD IDENTITY_CRISIS</p>
+    </div>
+    <p class="bsod-actions">
+      <button class="bsod-back" id="bsod-back" type="button">Go back to the totally real Mac</button>
+    </p>
+  </div>
+</div>
+
+<script src="script.js" defer></script>
+</body>
+</html>

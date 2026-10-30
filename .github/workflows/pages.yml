@@ -1,0 +1,36 @@
+name: Deploy site
+
+# Publishes docs/ to the root of the gh-pages branch. PR previews live beside it
+# under pr-preview/, so the deploy leaves that folder alone.
+#
+# Third-party actions run with a token that can push to any branch, so every action is pinned
+# to a full commit SHA (Dependabot proposes updates, see .github/dependabot.yml).
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish docs/ to gh-pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Deploy
+        uses: JamesIves/github-pages-deploy-action@fa24774553152dd7873cd16ebd8d959b010c5445 # v4.9.0
+        with:
+          folder: docs
+          branch: gh-pages
+          clean-exclude: pr-preview/
+          force: false
