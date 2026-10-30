@@ -801,6 +801,17 @@ apply_pinned_folder() {
   esac
 }
 
+# Edits the disguise's settings.json for the window tint, the emoji window title, and the
+# update pin. The file is JSONC (JSON with comments), the format VS Code uses: comments and
+# trailing commas are allowed, and users keep real notes in it. A plain JSON.parse rejects such
+# a file, and a parse-change-serialize round trip would drop every comment and reformat the
+# user's settings. So the editor below (JavaScript, run on the app's bundled Node) tokenizes the
+# file, locates the exact ranges of the three managed keys, and splices only those, leaving
+# everything else byte for byte as the user wrote it. It also handles what VS Code tolerates:
+# duplicate keys (the last one wins), empty and comment-only files, a BOM, and settings files
+# that are symbolic links in a dotfiles setup. That is why it is as long as it is; the cases it
+# covers are the ones tests/window-color.sh exercises.
+#
 # Usage: apply_window_settings APP PROFILE TINT_OP COLOR TITLE_OP EMOJI [UPDATE_OP]
 # UPDATE_OP "set" pins "update.mode" to "none": a disguise must never update itself. VS Code's
 # updater would rewrite the clone under its own signature, leaving it unlaunchable and no longer
