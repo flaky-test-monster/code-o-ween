@@ -134,9 +134,11 @@ CODE_O_WEEN_MANAGER_APP=/tmp/cow/Code-o-ween.app ./build-ui.sh
 - Put the reason for a guard in a comment next to it, not just the fix; the comments are the
   only place that reasoning lives.
 - Releasing: bump `VERSION` in `code-o-ween` (the build scripts read it from there), bump
-  `CFBundleVersion` in `build-ui.sh`, add a `CHANGELOG.md` entry, tag `vX.Y.Z`. The release
-  workflow checks the tag against `VERSION`, builds a universal disk image, attests it and
-  attaches it to the GitHub release. A published image is never replaced; a fix is a new tag.
+  `CFBundleVersion` in `build-ui.sh`, add a `CHANGELOG.md` entry, build and notarize the image
+  (see the README), create the release from it with `gh release create vX.Y.Z dist/...`, and
+  point the download button in `docs/index.html` at the new tag and file name (the page fetches
+  the newest release at runtime, but the markup is the fallback). A published image is never
+  replaced; a fix is a new tag.
 - There is no compatibility code for the layouts of unreleased prototypes (a `VS Code Instances`
   folder, `vscode-instance.*` metadata, unmarked settings folders, `VSCODE_INSTANCES_*`
   names). Do not add fallbacks for them.
