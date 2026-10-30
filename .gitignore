@@ -1,0 +1,5 @@
+# macOS Finder metadata
+.DS_Store
+
+# Disk images built by build-dmg.sh
+dist/

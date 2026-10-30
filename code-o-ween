@@ -1,0 +1,2101 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# A CDPATH in the environment would make `cd` resolve relative paths against other folders.
+unset CDPATH
+
+VERSION="0.1.0"
+
+resolve_script_dir() {
+  local source_path="${BASH_SOURCE[0]}"
+  while [[ -L "$source_path" ]]; do
+    local source_dir
+    source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    source_path="$(readlink "$source_path")"
+    [[ "$source_path" != /* ]] && source_path="$source_dir/$source_path"
+  done
+  cd -P "$(dirname "$source_path")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir)"
+ICON_DIR="${CODE_O_WEEN_ICON_DIR:-$SCRIPT_DIR/icons}"
+APP_ROOT="${CODE_O_WEEN_APP_ROOT:-$HOME/Applications/Code-o-ween}"
+# VS Code places its IPC socket inside --user-data-dir and macOS limits socket paths to
+# 103 bytes, so the default data root is kept short.
+DATA_ROOT="${CODE_O_WEEN_DATA_ROOT:-$HOME/.code-o-ween}"
+MAX_SOCKET_PATH=103
+BIN_ROOT="${CODE_O_WEEN_BIN_ROOT:-$HOME/.local/bin}"
+LAUNCHER_NAME="code-o-ween-launcher"
+BUNDLE_ID_PREFIX="local.code-o-ween"
+# Metadata files inside a disguise: Contents/Resources/<prefix>.<key>.
+METADATA_PREFIX="code-o-ween"
+ALL_KINDS="vscode vscode-insiders vscodium chrome chromium edge brave firefox slack discord obsidian generic"
+# A settings folder Code-o-ween created carries this marker naming the disguise that owns it.
+# Only a marked folder may be used or deleted.
+PROFILE_MARKER=".code-o-ween-profile"
+# Publisher Team IDs, pinned only where they were verified against a real installation. A
+# recipe with no pinned team accepts any Developer ID signature (see verify_source_app).
+MICROSOFT_TEAM_ID="UBF8T346G9"
+GOOGLE_TEAM_ID="EQHXZ8M8AV"
+# Darkest first, which is the order the manager's swatches show. Every preset is dark enough
+# for white text (a contrast of at least 4.5:1, see foregroundFor in apply_window_settings).
+# blue, green, orange, pink, purple, red, teal and yellow have hand-made bundled icons for
+# VS Code-style apps; the rest, and any #RRGGBB color, get a drawn badge.
+COLOR_TABLE=(
+  black:#212121 navy:#1A237E magenta:#AD1457 indigo:#3F51B5 brown:#795548 slate:#546E7A purple:#7E57C2 lime:#4F7D2A
+  yellow:#946A00 orange:#BF4F00 green:#1E8255 teal:#007F88 red:#D13C3C blue:#2276D2 pink:#D33682
+)
+
+die() {
+  printf 'Error: %s\n' "$*" >&2
+  exit 1
+}
+
+note() {
+  printf '%s\n' "$*"
+}
+
+warn() {
+  printf 'Warning: %s\n' "$*" >&2
+}
+
+# Runs a command, showing its output only if it fails. Keeps codesign quiet on success
+# without hiding the reason for a failure.
+run_quiet() {
+  local output
+  output="$("$@" 2>&1)" || { printf '%s\n' "$output" >&2; return 1; }
+}
+
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+validate_name() {
+  local name="$1" control='[[:cntrl:]]'
+  [[ -n "$name" ]] || die "NAME cannot be empty"
+  # A leading dash would be read as an option by the CLI and by the manager UI.
+  [[ "$name" != -* ]] || die "NAME cannot start with '-'"
+  [[ "$name" != *"/"* && "$name" != *":"* ]] || die "NAME cannot contain '/' or ':'"
+  [[ ! "$name" =~ $control ]] || die "NAME cannot contain control characters"
+  [[ "$name" != [[:space:]]* && "$name" != *[[:space:]] ]] || die "NAME cannot start or end with spaces"
+}
+
+usage() {
+  cat <<'EOF'
+Code-o-ween — disguise VS Code and other Mac apps for trick or treat.
+
+Usage:
+  code-o-ween create NAME [--app APP | --source APP_BUNDLE [--trust-source]] [--color COLOR]
+                          [--emoji EMOJI | --icon FILE | --built-in-icon]
+                          [--folder DIR] [--window-color on|off]
+                          [--extensions shared|isolated] [--force]
+  code-o-ween update NAME [--color COLOR] [--emoji EMOJI | --icon FILE | --built-in-icon]
+                          [--folder DIR | --no-folder] [--window-color on|off]
+  code-o-ween open NAME [-- PATH ...]
+  code-o-ween list
+  code-o-ween apps
+  code-o-ween colors
+  code-o-ween refresh NAME [--source APP_BUNDLE [--trust-source]]
+  code-o-ween refresh --all
+  code-o-ween remove NAME [--delete-data] [--yes]
+  code-o-ween gui
+  code-o-ween doctor
+  code-o-ween version
+
+Examples:
+  code-o-ween create Cauldron --color orange --emoji "🎃" --extensions isolated
+  code-o-ween create Personal --app chrome --color purple --emoji "👻"
+  code-o-ween create Standup --app slack --color teal
+  code-o-ween create Work --icon ~/Pictures/vampire-code.svg
+  code-o-ween create Night --color "#1A1A2E" --emoji "🦇"
+  code-o-ween create Cauldron --emoji "🎃" --folder ~/code/cauldron
+  code-o-ween update Cauldron --color purple
+  code-o-ween create Beta --source "/Applications/Some Other App.app"
+  code-o-ween open Cauldron -- ~/code/cauldron
+  code-cauldron ~/code/cauldron
+  chrome-personal https://example.com
+
+APP is one of the recipes listed by 'code-o-ween apps' (default: vscode). With --source
+alone, the app is recognized from its bundle identifier; unknown apps get a private HOME.
+
+COLOR is a preset name from 'code-o-ween colors' or any #RRGGBB value. The window tint, the
+emoji window title, and --folder apply to VS Code-style apps.
+
+A source app must be signed by its publisher (for recipes with a pinned Team ID) or by an
+identified developer. --trust-source accepts any validly signed build, for example VSCodium.
+
+Environment overrides:
+  CODE_O_WEEN_<APP>_APP    Source bundle for a recipe, e.g. CODE_O_WEEN_CHROME_APP
+  VSCODE_APP               Source Visual Studio Code.app (same as CODE_O_WEEN_VSCODE_APP)
+  CODE_O_WEEN_APP_ROOT     Where disguise apps are stored
+  CODE_O_WEEN_DATA_ROOT    Where settings and isolated extensions are stored (keep it short)
+  CODE_O_WEEN_BIN_ROOT     Where terminal shortcuts are created
+EOF
+}
+
+require_macos() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "this utility only runs on macOS"
+}
+
+# The shape slugify produces. Anything read back from a bundle that does not match is not used
+# as a command argument: a metadata file saying "--all" must not turn "refresh <slug>" into a
+# refresh of everything.
+is_slug() {
+  local pattern='^[a-z0-9]+(-[a-z0-9]+)*$'
+  [[ "$1" =~ $pattern ]]
+}
+
+slugify() {
+  local value="$1"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+  value="$(printf '%s' "$value" | tr -cd 'a-z0-9._-')"
+  value="$(printf '%s' "$value" | sed -E 's/[-_.]+/-/g; s/^-//; s/-$//')"
+  [[ -n "$value" ]] || die "NAME must contain at least one ASCII letter or number"
+  printf '%s' "$value"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Recipes
+#
+# Every supported app has a recipe. Its family decides how a disguise keeps its data apart:
+#   vscode    --user-data-dir (and optionally --extensions-dir), the bundled command-line
+#             launcher, and a Keychain item of its own
+#   chromium  --user-data-dir=DIR
+#   firefox   --profile DIR
+#   home      a private HOME directory; this works for most other apps
+#
+# load_kind sets KIND, KIND_LABEL, KIND_PREFIX (the "PREFIX - NAME.app" part), KIND_FAMILY,
+# KIND_SHORTCUT (terminal shortcut prefix for families without a CLI), KIND_CANDIDATES (the
+# bundle name looked up in /Applications and ~/Applications), KIND_BUNDLE_IDS, KIND_TEAM_ID
+# (the publisher's Team ID, when it is pinned), and KIND_STATUS:
+#   verified    created, launched and exercised on a Mac
+#   unverified  the mechanism is in place, but the app has not been run as a disguise
+#   broken      known not to work; create refuses it before copying anything
+# Only Visual Studio Code itself is verified. The other VS Code-style apps share its mechanism
+# but have not been run; Chromium-family apps cannot be re-signed yet (see sign_disguise).
+# ---------------------------------------------------------------------------------------------
+load_kind() {
+  KIND="$1"
+  KIND_SHORTCUT=""
+  KIND_CANDIDATES=""
+  KIND_BUNDLE_IDS=""
+  KIND_TEAM_ID=""
+  KIND_STATUS="unverified"
+  case "$KIND" in
+    vscode)
+      KIND_LABEL="Visual Studio Code"; KIND_PREFIX="VS Code"; KIND_FAMILY="vscode"
+      KIND_CANDIDATES="Visual Studio Code.app"; KIND_BUNDLE_IDS="com.microsoft.VSCode"
+      KIND_TEAM_ID="$MICROSOFT_TEAM_ID"; KIND_STATUS="verified" ;;
+    vscode-insiders)
+      KIND_LABEL="Visual Studio Code - Insiders"; KIND_PREFIX="VS Code Insiders"; KIND_FAMILY="vscode"
+      KIND_CANDIDATES="Visual Studio Code - Insiders.app"; KIND_BUNDLE_IDS="com.microsoft.VSCodeInsiders" ;;
+    vscodium)
+      KIND_LABEL="VSCodium"; KIND_PREFIX="VSCodium"; KIND_FAMILY="vscode"
+      KIND_CANDIDATES="VSCodium.app"; KIND_BUNDLE_IDS="com.vscodium" ;;
+    chrome)
+      KIND_LABEL="Google Chrome"; KIND_PREFIX="Chrome"; KIND_FAMILY="chromium"; KIND_SHORTCUT="chrome"
+      KIND_CANDIDATES="Google Chrome.app"; KIND_BUNDLE_IDS="com.google.Chrome"
+      KIND_TEAM_ID="$GOOGLE_TEAM_ID" ;;
+    chromium)
+      KIND_LABEL="Chromium"; KIND_PREFIX="Chromium"; KIND_FAMILY="chromium"; KIND_SHORTCUT="chromium"
+      KIND_CANDIDATES="Chromium.app"; KIND_BUNDLE_IDS="org.chromium.Chromium" ;;
+    edge)
+      KIND_LABEL="Microsoft Edge"; KIND_PREFIX="Edge"; KIND_FAMILY="chromium"; KIND_SHORTCUT="edge"
+      KIND_CANDIDATES="Microsoft Edge.app"; KIND_BUNDLE_IDS="com.microsoft.edgemac" ;;
+    brave)
+      KIND_LABEL="Brave Browser"; KIND_PREFIX="Brave"; KIND_FAMILY="chromium"; KIND_SHORTCUT="brave"
+      KIND_CANDIDATES="Brave Browser.app"; KIND_BUNDLE_IDS="com.brave.Browser" ;;
+    firefox)
+      KIND_LABEL="Firefox"; KIND_PREFIX="Firefox"; KIND_FAMILY="firefox"; KIND_SHORTCUT="firefox"
+      KIND_CANDIDATES="Firefox.app"; KIND_BUNDLE_IDS="org.mozilla.firefox" ;;
+    slack)
+      KIND_LABEL="Slack"; KIND_PREFIX="Slack"; KIND_FAMILY="home"; KIND_SHORTCUT="slack"
+      KIND_CANDIDATES="Slack.app"; KIND_BUNDLE_IDS="com.tinyspeck.slackmacgap" ;;
+    discord)
+      KIND_LABEL="Discord"; KIND_PREFIX="Discord"; KIND_FAMILY="home"; KIND_SHORTCUT="discord"
+      KIND_CANDIDATES="Discord.app"; KIND_BUNDLE_IDS="com.hnc.Discord" ;;
+    obsidian)
+      KIND_LABEL="Obsidian"; KIND_PREFIX="Obsidian"; KIND_FAMILY="home"; KIND_SHORTCUT="obsidian"
+      KIND_CANDIDATES="Obsidian.app"; KIND_BUNDLE_IDS="md.obsidian" ;;
+    generic)
+      # Any app passed with --source. Label, prefix, and shortcut come from the bundle itself,
+      # and a VS Code-style bundle is treated like one (see configure_kind_for_source).
+      KIND_LABEL="Any other app"; KIND_PREFIX=""; KIND_FAMILY="home" ;;
+    *) die "unknown app '$KIND' (run 'code-o-ween apps')" ;;
+  esac
+  [[ "$KIND_FAMILY" != chromium ]] || KIND_STATUS="broken"
+}
+
+status_description() {
+  case "$1" in
+    verified) printf 'verified' ;;
+    unverified) printf 'not yet verified' ;;
+    broken) printf 'not working' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Refuses a broken recipe before anything is copied, and says so once for an unverified one.
+assert_kind_usable() {
+  case "$KIND_STATUS" in
+    broken)
+      die "$KIND_LABEL disguises do not work yet: its framework cannot be re-signed by Code-o-ween, so macOS would refuse to open the copy. Nothing was created." ;;
+    unverified)
+      warn "$KIND_LABEL has not been run as a disguise on a Mac yet; if it misbehaves, 'code-o-ween remove' takes it away again." ;;
+  esac
+}
+
+family_description() {
+  case "$1" in
+    vscode) printf -- '--user-data-dir' ;;
+    chromium) printf -- '--user-data-dir=' ;;
+    firefox) printf -- '--profile' ;;
+    home) printf 'private HOME' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Name of the environment variable that overrides a recipe's source bundle.
+source_env_name() {
+  printf 'CODE_O_WEEN_%s_APP' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+}
+
+# Prints the source bundle for the loaded recipe.
+default_source_app() {
+  local env_name dir
+  env_name="$(source_env_name "$KIND")"
+  if [[ -n "${!env_name:-}" ]]; then
+    printf '%s' "${!env_name}"
+    return
+  fi
+  if [[ "$KIND" == vscode && -n "${VSCODE_APP:-}" ]]; then
+    printf '%s' "$VSCODE_APP"
+    return
+  fi
+  [[ -n "$KIND_CANDIDATES" ]] || die "'$KIND_LABEL' has no default location; pass --source /path/to/App.app"
+  for dir in /Applications "$HOME/Applications"; do
+    if [[ -d "$dir/$KIND_CANDIDATES" ]]; then
+      printf '%s' "$dir/$KIND_CANDIDATES"
+      return
+    fi
+  done
+  die "$KIND_CANDIDATES was not found; pass --source /path/to/$KIND_CANDIDATES"
+}
+
+# Prints the recipe whose bundle identifier list contains ID, if any.
+kind_for_bundle_id() {
+  local id="$1" kind
+  [[ -n "$id" ]] || return 1
+  for kind in $ALL_KINDS; do
+    if (load_kind "$kind"; [[ " $KIND_BUNDLE_IDS " == *" $id "* ]]); then
+      printf '%s' "$kind"
+      return 0
+    fi
+  done
+  return 1
+}
+
+plist_value() {
+  /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null || true
+}
+
+is_vscode_style_app() {
+  [[ -f "$1/Contents/Resources/app/product.json" && -d "$1/Contents/Resources/app/bin" ]]
+}
+
+# Prints the recipe for an app bundle: a known bundle identifier, else generic.
+detect_kind() {
+  local kind
+  if kind="$(kind_for_bundle_id "$(plist_value "$1" CFBundleIdentifier)")"; then
+    printf '%s' "$kind"
+  else
+    printf 'generic'
+  fi
+}
+
+app_bundle_name() {
+  local name
+  name="$(basename "$1" .app)"
+  [[ -n "$name" && "$name" != "." ]] || die "cannot determine the app name of $1"
+  printf '%s' "$name"
+}
+
+# Loads a recipe and, for generic, fills in what the bundle itself tells us.
+configure_kind_for_source() {
+  local kind="$1" source="$2"
+  load_kind "$kind"
+  if [[ "$KIND" == generic ]]; then
+    KIND_LABEL="$(app_bundle_name "$source")"
+    KIND_PREFIX="$KIND_LABEL"
+    KIND_SHORTCUT="$(slugify "$KIND_LABEL")"
+    if is_vscode_style_app "$source"; then
+      KIND_FAMILY="vscode"
+    fi
+  fi
+}
+
+# Prints the stored form of a color: a preset name, or an upper-case #RRGGBB.
+canonical_color() {
+  local value="$1" entry hex_pattern='^#[0-9A-Fa-f]{6}$'
+  if [[ "$value" =~ $hex_pattern ]]; then
+    printf '%s' "$value" | tr '[:lower:]' '[:upper:]'
+    return 0
+  fi
+  value="$(lowercase "$value")"
+  for entry in "${COLOR_TABLE[@]}"; do
+    if [[ "${entry%%:*}" == "$value" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+  return 1
+}
+
+color_hex() {
+  local value="$1" entry
+  if [[ "$value" == \#* ]]; then
+    printf '%s' "$value" | tr '[:lower:]' '[:upper:]'
+    return 0
+  fi
+  value="$(lowercase "$value")"
+  for entry in "${COLOR_TABLE[@]}"; do
+    if [[ "${entry%%:*}" == "$value" ]]; then
+      printf '%s' "${entry#*:}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+color_names() {
+  local entry
+  for entry in "${COLOR_TABLE[@]}"; do printf '%-8s %s\n' "${entry%%:*}" "${entry#*:}"; done
+}
+
+# Renders a transparent 1024x1024 PNG with AppKit via JavaScript for Automation, which ships
+# with macOS. Usage: render_png emoji EMOJI HEX OUTPUT | render_png image FILE OUTPUT |
+# render_png badge FILE HEX OUTPUT (the image, e.g. an app's own .icns, on a colored tile).
+render_png() {
+  /usr/bin/osascript -l JavaScript - "$@" >/dev/null 2>&1 <<'JXA'
+ObjC.import('AppKit');
+function run(argv) {
+  const mode = argv[0], out = argv[argv.length - 1], size = 1024;
+  const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
+    null, size, size, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+  $.NSGraphicsContext.saveGraphicsState;
+  $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+  // Paints the rounded, colored tile and returns the text color that reads best on it.
+  const paintTile = (hexArg) => {
+    const hex = hexArg.replace('#', '');
+    const channel = (i) => parseInt(hex.substr(i, 2), 16) / 255;
+    $.NSColor.colorWithSRGBRedGreenBlueAlpha(channel(0), channel(2), channel(4), 1).setFill;
+    $.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius($.NSMakeRect(48, 48, 928, 928), 210, 210).fill;
+    const ring = $.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius($.NSMakeRect(70, 70, 884, 884), 190, 190);
+    ring.lineWidth = 7;
+    $.NSColor.colorWithSRGBRedGreenBlueAlpha(1, 1, 1, 0.35).setStroke;
+    ring.stroke;
+    const light = 0.299 * channel(0) + 0.587 * channel(2) + 0.114 * channel(4) > 0.62;
+    return light ? $.NSColor.colorWithSRGBRedGreenBlueAlpha(0.12, 0.12, 0.12, 1) : $.NSColor.whiteColor;
+  };
+  const drawCentered = (string, font, color) => {
+    const attributes = $.NSMutableDictionary.dictionary;
+    attributes.setObjectForKey(font, $.NSFontAttributeName);
+    attributes.setObjectForKey(color, $.NSForegroundColorAttributeName);
+    const text = $(string);
+    const bounds = text.sizeWithAttributes(attributes);
+    text.drawAtPointWithAttributes($.NSMakePoint((size - bounds.width) / 2, (size - bounds.height) / 2), attributes);
+  };
+  const drawImage = (file, box) => {
+    const image = $.NSImage.alloc.initWithContentsOfFile(file);
+    if (image.isNil() || image.size.width <= 0 || image.size.height <= 0) throw new Error('unreadable image');
+    const scale = Math.min(box / image.size.width, box / image.size.height);
+    const w = image.size.width * scale, h = image.size.height * scale;
+    image.drawInRectFromRectOperationFraction($.NSMakeRect((size - w) / 2, (size - h) / 2, w, h), $.NSZeroRect, $.NSCompositingOperationSourceOver, 1);
+  };
+  if (mode === 'emoji') {
+    const foreground = paintTile(argv[2]);
+    drawCentered(argv[1], $.NSFont.fontWithNameSize('Apple Color Emoji', 560), foreground);
+  } else if (mode === 'code') {
+    const foreground = paintTile(argv[1]);
+    drawCentered('</>', $.NSFont.monospacedSystemFontOfSizeWeight(360, $.NSFontWeightBold), foreground);
+  } else if (mode === 'badge') {
+    paintTile(argv[2]);
+    drawImage(argv[1], 640);
+  } else {
+    drawImage(argv[1], size);
+  }
+  $.NSGraphicsContext.restoreGraphicsState;
+  const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({}));
+  if (!png.writeToFileAtomically(out, true)) throw new Error('could not write ' + out);
+}
+JXA
+}
+
+png_to_icns() {
+  local source_png="$1" output="$2" iconset="$3/AppIcon.iconset" size filename
+  mkdir -p "$iconset"
+  while read -r size filename; do
+    /usr/bin/sips -s format png -z "$size" "$size" "$source_png" --out "$iconset/$filename" >/dev/null
+  done <<'EOF'
+16 icon_16x16.png
+32 icon_16x16@2x.png
+32 icon_32x32.png
+64 icon_32x32@2x.png
+128 icon_128x128.png
+256 icon_128x128@2x.png
+256 icon_256x256.png
+512 icon_256x256@2x.png
+512 icon_512x512.png
+1024 icon_512x512@2x.png
+EOF
+  /usr/bin/iconutil -c icns "$iconset" -o "$output"
+}
+
+render_to_icns() {
+  local input="$1" output="$2" extension tmp_root source_png preview
+  extension="${input##*.}"
+  extension="$(printf '%s' "$extension" | tr '[:upper:]' '[:lower:]')"
+
+  case "$extension" in
+    icns) cp "$input" "$output"; return ;;
+    svg|png|jpg|jpeg|tif|tiff|webp) ;;
+    *) die "unsupported icon format '.$extension'; use SVG, PNG, JPEG, TIFF, WebP, or ICNS" ;;
+  esac
+
+  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
+  source_png="$tmp_root/source.png"
+  if ! render_png image "$input" "$source_png"; then
+    if [[ "$extension" == "svg" ]]; then
+      # Fallback: Quick Look thumbnails have an opaque background.
+      mkdir -p "$tmp_root/render"
+      /usr/bin/qlmanage -t -s 1024 -o "$tmp_root/render" "$input" >/dev/null 2>&1 || true
+      preview="$(find "$tmp_root/render" -maxdepth 1 -type f -name '*.png' -print -quit)"
+      if [[ -z "$preview" ]]; then
+        rm -rf -- "$tmp_root"
+        die "macOS could not render the SVG: $input"
+      fi
+      source_png="$preview"
+    else
+      source_png="$input"
+    fi
+  fi
+
+  png_to_icns "$source_png" "$output" "$tmp_root"
+  rm -rf -- "$tmp_root"
+}
+
+render_emoji_icon() {
+  local emoji="$1" color="$2" output="$3" tmp_root
+  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
+  render_png emoji "$emoji" "$(color_hex "$color")" "$tmp_root/emoji.png" ||
+    { rm -rf -- "$tmp_root"; die "macOS could not draw the emoji icon"; }
+  png_to_icns "$tmp_root/emoji.png" "$output" "$tmp_root"
+  rm -rf -- "$tmp_root"
+}
+
+# The drawn "</>" badge, for colors without a bundled icon.
+render_code_icon() {
+  local color="$1" output="$2" tmp_root
+  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
+  render_png code "$(color_hex "$color")" "$tmp_root/code.png" ||
+    { rm -rf -- "$tmp_root"; die "macOS could not draw the built-in icon"; }
+  png_to_icns "$tmp_root/code.png" "$output" "$tmp_root"
+  rm -rf -- "$tmp_root"
+}
+
+# The icon a disguise gets when no emoji or image was chosen. VS Code-style apps use the
+# hand-made bundled icons; other apps wear their own icon on the colored tile. Colors without
+# either fall back to the drawn badge.
+built_in_icon() {
+  local color="$1" output="$2" family="$3" source="${4:-}" source_icon
+  if [[ "$family" == vscode && -f "$ICON_DIR/$color.icns" ]]; then
+    cp "$ICON_DIR/$color.icns" "$output"
+    return
+  fi
+  if [[ "$family" != vscode && -n "$source" ]] && source_icon="$(source_icon_file "$source")"; then
+    render_badge_icon "$source_icon" "$color" "$output"
+    return
+  fi
+  render_code_icon "$color" "$output"
+}
+
+# The source app's own icon on a colored tile, so disguises of the same app stay apart.
+render_badge_icon() {
+  local source_icon="$1" color="$2" output="$3" tmp_root
+  tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
+  if render_png badge "$source_icon" "$(color_hex "$color")" "$tmp_root/badge.png"; then
+    png_to_icns "$tmp_root/badge.png" "$output" "$tmp_root"
+    rm -rf -- "$tmp_root"
+    return
+  fi
+  rm -rf -- "$tmp_root"
+  # Fallback: keep the app's own icon without the tile.
+  render_to_icns "$source_icon" "$output"
+}
+
+# Prints the .icns file an app bundle declares, if it has one.
+source_icon_file() {
+  local app="$1" icon
+  icon="$(plist_value "$app" CFBundleIconFile)"
+  [[ -n "$icon" ]] || return 1
+  [[ "$icon" == *.icns ]] || icon="$icon.icns"
+  [[ -f "$app/Contents/Resources/$icon" ]] || return 1
+  printf '%s' "$app/Contents/Resources/$icon"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Source verification and signing
+# ---------------------------------------------------------------------------------------------
+
+# Prints the source bundle's executable name, rejecting anything that is not a plain name.
+# The name is used to build paths and is run as Node, so it is validated before use.
+source_executable() {
+  local app="$1" executable pattern='^[A-Za-z0-9 ._-]+$'
+  executable="$(plist_value "$app" CFBundleExecutable)"
+  [[ "$executable" != "$LAUNCHER_NAME" ]] || die "use the original app installation as --source, not a disguise"
+  [[ -n "$executable" && "$executable" =~ $pattern && "$executable" != .* ]] ||
+    die "unexpected executable name in $app: $executable"
+  [[ -f "$app/Contents/MacOS/$executable" && -x "$app/Contents/MacOS/$executable" ]] ||
+    die "could not locate the executable of $app"
+  printf '%s' "$executable"
+}
+
+# The source bundle is cloned, its executable is run as Node, and the copy is given a fresh
+# signature, so it has to be verified first. A recipe with a pinned Team ID must come from that
+# publisher; the others accept any Apple-anchored signature, which still rejects unsigned and
+# tampered bundles. --trust-source relaxes this to "the signature verifies".
+verify_source_app() {
+  local source="$1" trust="$2" team="$3" requirement
+  if [[ "$trust" == true ]]; then
+    run_quiet /usr/bin/codesign --verify --deep --strict "$source" ||
+      die "the source app's code signature is not valid: $source"
+    return
+  fi
+  if [[ -n "$team" ]]; then
+    requirement="anchor apple generic and certificate leaf[subject.OU] = \"$team\""
+    run_quiet /usr/bin/codesign --verify --deep --strict -R="$requirement" "$source" ||
+      die "the source app is not ${KIND_LABEL:-the expected app} signed by its publisher: $source (pass --trust-source to use another validly signed build)"
+  else
+    requirement="anchor apple generic"
+    run_quiet /usr/bin/codesign --verify --deep --strict -R="$requirement" "$source" ||
+      die "the source app is not signed by an identified developer: $source (pass --trust-source to use it anyway)"
+  fi
+}
+
+# Adds the disable-library-validation entitlement to CODE and re-signs it ad hoc under the
+# hardened runtime. Once re-signed, a disguise's executables no longer share the publisher's
+# Team ID with the frameworks they load, and dyld refuses the mapping ("different Team IDs")
+# without that entitlement.
+#
+# --options runtime is unconditional and must stay that way: the hardened runtime on the
+# executable the kernel actually starts is what makes macOS ignore DYLD_* variables, and the
+# preceding --deep pass has already cleared the flags that could be read back from the copy.
+sign_without_library_validation() {
+  local code="$1" work="$2" entitlements
+  shift 2
+  entitlements="$(mktemp "$work/entitlements.XXXXXX")"
+  /usr/bin/codesign -d --entitlements - --xml "$code" >"$entitlements" 2>/dev/null || true
+  if [[ ! -s "$entitlements" ]]; then
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n' >"$entitlements"
+  fi
+  /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.cs.disable-library-validation' "$entitlements" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c 'Add :com.apple.security.cs.disable-library-validation bool true' "$entitlements" >/dev/null
+  # Preserving the publisher's entitlements must not preserve this one: it makes the hardened
+  # runtime honour DYLD_* again, which is exactly what the re-signing is meant to prevent.
+  /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.cs.allow-dyld-environment-variables' "$entitlements" >/dev/null 2>&1 || true
+  run_quiet /usr/bin/codesign --force --sign - --options runtime \
+    --entitlements "$entitlements" "$@" "$code" || die "could not sign $code"
+}
+
+# Signs a disguise inside-out, keeping the hardened runtime and entitlements the publisher
+# shipped. A plain "codesign --deep --sign -" would drop both, which is what let
+# DYLD_INSERT_LIBRARIES work against earlier disguises.
+#
+# The main executable is signed under its own identifier so that each disguise has a distinct
+# code hash and therefore its own Keychain access, instead of one "Always Allow" covering every
+# disguise of the same app. The hash stays stable across refreshes of the same app version.
+sign_disguise() {
+  local app="$1" slug="$2" executable="$3" work="$4" nested
+  rm -rf -- "$app/Contents/_CodeSignature"
+  run_quiet /usr/bin/codesign --force --deep --sign - --preserve-metadata=entitlements,flags "$app" ||
+    die "could not sign the disguise at $app"
+  # Helper bundles live directly in Contents/Frameworks for Electron apps and inside a
+  # versioned framework for Chromium ones, so they are found rather than globbed.
+  #
+  # Depth-first, and frameworks are re-sealed in the same pass: signing a helper invalidates
+  # the seal of the framework that contains it, and only re-sealing the outer bundle would
+  # leave that framework reported as "nested code is modified or invalid".
+  while IFS= read -r nested; do
+    [[ -d "$nested" ]] || continue
+    case "$nested" in
+      *.app) sign_without_library_validation "$nested" "$work" ;;
+      *.framework)
+        run_quiet /usr/bin/codesign --force --sign - --preserve-metadata=entitlements,flags "$nested" ||
+          die "could not seal $nested" ;;
+    esac
+  done < <(find "$app/Contents" \( -name '*.app' -o -name '*.framework' \) -type d -depth 2>/dev/null || true)
+  sign_without_library_validation "$app/Contents/MacOS/$executable" "$work" -i "$BUNDLE_ID_PREFIX.$slug.code"
+  run_quiet /usr/bin/codesign --force --sign - --preserve-metadata=entitlements,flags "$app" ||
+    die "could not seal the disguise at $app"
+  # A disguise that does not verify will be refused by Launch Services, so it is better to fail
+  # here and let the create transaction roll back than to install a bundle that cannot open.
+  # Chromium-family apps currently land here: their versioned framework cannot be re-signed by
+  # these means, which is a known gap rather than something this signing order introduced.
+  run_quiet /usr/bin/codesign --verify --deep --strict "$app" ||
+    die "the disguise at $app does not pass signature verification, so macOS would refuse to open it; this app's bundle layout is not supported yet"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Settings folder ownership
+# ---------------------------------------------------------------------------------------------
+
+# Prints PATH with symlinks and "." or ".." resolved in its deepest existing ancestor, so a
+# folder that does not exist yet still compares by where it would really be created.
+physical_path() {
+  local path="${1%/}" rest="" resolved
+  while [[ -n "$path" && ! -d "$path" ]]; do
+    rest="/${path##*/}$rest"
+    path="${path%/*}"
+  done
+  resolved="$(cd -P "${path:-/}" 2>/dev/null && pwd)" || resolved="$path"
+  [[ "$resolved" != / ]] || resolved=""
+  printf '%s%s' "$resolved" "$rest"
+}
+
+# The home folder and its ancestors are never a settings folder, however the path is spelled:
+# both sides are compared by physical location, and case-insensitively because macOS
+# filesystems usually are.
+assert_safe_profile_location() {
+  local profile home
+  profile="$(lowercase "$(physical_path "$1")")"
+  home="$(lowercase "$(physical_path "$HOME")")"
+  [[ -n "$profile" && "$profile" != "$home" && "$home/" != "$profile"/* ]] ||
+    die "refusing to use '$1' as a settings folder"
+}
+
+# True when PROFILE does not exist or carries our marker for SLUG. A familiar set of entry
+# names is not proof of ownership (a project folder can contain a "profile" directory too), so
+# an unmarked folder is never adopted.
+profile_is_ours() {
+  local profile="$1" slug="$2"
+  # Only a genuinely absent path is claimable; an existing file or other non-directory is not.
+  if [[ ! -e "$profile" && ! -L "$profile" ]]; then return 0; fi
+  [[ -d "$profile" && -f "$profile/$PROFILE_MARKER" ]] || return 1
+  [[ "$(<"$profile/$PROFILE_MARKER")" == "$slug" ]]
+}
+
+# The guards every command runs before it writes into or deletes a settings folder: never the
+# home folder, never a symbolic link (rm -rf would remove the link and leave the data, and the
+# ownership checks would have looked through it), and only a folder Code-o-ween owns.
+assert_profile_ours() {
+  local profile="$1" slug="$2" action="$3" hint="${4:-}"
+  assert_safe_profile_location "$profile"
+  [[ ! -L "$profile" ]] || die "refusing to $action '$profile': it is a symbolic link; point Code-o-ween at the real folder"
+  profile_is_ours "$profile" "$slug" ||
+    die "refusing to $action '$profile': it was not created by Code-o-ween for '$slug'$hint"
+}
+
+claim_profile() {
+  local profile="$1" slug="$2"
+  assert_profile_ours "$profile" "$slug" use "; move it aside, or choose another NAME or CODE_O_WEEN_DATA_ROOT"
+  mkdir -p "$profile"
+  printf '%s' "$slug" >"$profile/$PROFILE_MARKER"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Locating disguises and their metadata
+# ---------------------------------------------------------------------------------------------
+app_roots() {
+  printf '%s\n' "$APP_ROOT"
+}
+
+# Prints the path of every disguise, NUL-separated, in a stable order.
+find_instances() {
+  local root metadata
+  while IFS= read -r root; do
+    [[ -d "$root" ]] || continue
+    while IFS= read -r -d '' metadata; do
+      printf '%s\0' "${metadata%/Contents/Resources/*.slug}"
+    done < <(find -H "$root" -mindepth 4 -maxdepth 4 -type f -name "$METADATA_PREFIX.slug" -print0 2>/dev/null || true)
+  done < <(app_roots) | sort -z
+}
+
+# The metadata file for KEY inside a disguise.
+metadata_path() {
+  printf '%s' "$1/Contents/Resources/$METADATA_PREFIX.$2"
+}
+
+read_metadata() {
+  local file
+  file="$(metadata_path "$1" "$2")"
+  if [[ -f "$file" ]]; then
+    printf '%s' "$(<"$file")"
+  else
+    printf '%s' "${3:-}"
+  fi
+}
+
+write_metadata() {
+  printf '%s' "$3" >"$1/Contents/Resources/$METADATA_PREFIX.$2"
+}
+
+require_instance() {
+  local app
+  app="$(app_for_slug "$(slugify "$1")" || true)"
+  [[ -n "$app" ]] || die "disguise '$1' does not exist"
+  printf '%s' "$app"
+}
+
+# Prints the one app carrying SLUG. Two bundles claiming the same slug would make every command
+# act on an arbitrary one (remove could delete the wrong app), so that is refused instead.
+app_for_slug() {
+  local slug="$1" app
+  local -a matches=()
+  is_slug "$slug" || return 1
+  while IFS= read -r -d '' app; do
+    [[ "$(read_metadata "$app" slug)" != "$slug" ]] || matches+=("$app")
+  done < <(find_instances)
+  case ${#matches[@]} in
+    0) return 1 ;;
+    1) printf '%s' "${matches[0]}" ;;
+    *) die "more than one disguise claims the name '$slug': $(printf '%s; ' "${matches[@]}")remove or rename the extra bundles" ;;
+  esac
+}
+
+name_for_app() {
+  local name
+  name="$(read_metadata "$1" name)"
+  if [[ -n "$name" ]]; then printf '%s' "$name"; else basename "$1" .app; fi
+}
+
+kind_for_app() {
+  read_metadata "$1" kind vscode
+}
+
+family_for_app() {
+  read_metadata "$1" family vscode
+}
+
+label_for_app() {
+  read_metadata "$1" label "Visual Studio Code"
+}
+
+# The recorded shortcut name; code-NAME when a bundle records none.
+shortcut_for_app() {
+  read_metadata "$1" shortcut "code-$2"
+}
+
+copy_app_bundle() {
+  local source="$1" destination="$2"
+  if cp -cR "$source" "$destination" 2>/dev/null; then
+    return
+  fi
+  note "APFS clone unavailable; copying the full app bundle..."
+  /usr/bin/ditto "$source" "$destination"
+}
+
+assert_stopped() {
+  local app="$1" resolved processes
+  resolved="$(cd -P "$app" 2>/dev/null && pwd)" || resolved="$app"
+  processes="$(/bin/ps -axo command=)" || die "cannot inspect running processes"
+  if [[ "$processes" == *"$app/Contents/"* || "$processes" == *"$resolved/Contents/"* ]]; then
+    die "quit the disguise at '$app' before refreshing or removing it"
+  fi
+}
+
+assert_shortcut_owned() {
+  local slug="$1" shortcut="$BIN_ROOT/$2"
+  [[ ! -L "$shortcut" ]] || die "refusing to replace a symlink: $shortcut"
+  if [[ -e "$shortcut" ]]; then
+    [[ -f "$shortcut" ]] || die "shortcut is not a regular file: $shortcut"
+    /usr/bin/grep -Fxq "# Managed by Code-o-ween: $slug" "$shortcut" ||
+      die "unrecognized shortcut: $shortcut; move it aside manually before retrying"
+  fi
+}
+
+profile_for_app() {
+  local app="$1" slug="$2" profile
+  profile="$(read_metadata "$app" profile)"
+  [[ -n "$profile" ]] || profile="$DATA_ROOT/$slug"
+  [[ "$profile" == /* && "$profile" == */"$slug" && "$profile" != *'/../'* ]] || die "unsafe profile path: $profile"
+  printf '%s' "$profile"
+}
+
+assert_socket_path_fits() {
+  local profile="$1" socket
+  # Longest socket VS Code creates there: "<major.minor, 4 chars>-<type, up to 6 chars>.sock".
+  socket="$profile/user-data/0.00-shared.sock"
+  # The kernel's limit is in bytes; ${#socket} would count characters in a UTF-8 locale.
+  local bytes
+  bytes="$(printf '%s' "$socket" | LC_ALL=C /usr/bin/wc -c | tr -d ' ')"
+  if [[ $bytes -gt $MAX_SOCKET_PATH ]]; then
+    die "the settings path '$profile' is too long for VS Code's IPC socket (macOS allows $MAX_SOCKET_PATH bytes); use a shorter NAME or a shorter CODE_O_WEEN_DATA_ROOT"
+  fi
+}
+
+keychain_service_for_slug() {
+  printf 'Code-o-ween %s' "$1"
+}
+
+# Runs a script with the source app's bundled Node (Electron in Node mode). The source app is
+# used rather than the copy because the copy's signature is invalid until it is re-signed.
+run_bundled_node() {
+  local node_app="$1" executable="$2"
+  shift 2
+  ELECTRON_RUN_AS_NODE=1 "$node_app/Contents/MacOS/$executable" "$@"
+}
+
+# Prints the name of a VS Code-style app's command-line launcher (code, codium, ...).
+product_application_name() {
+  local app="$1" executable="$2" name
+  name="$(run_bundled_node "$app" "$executable" -e '
+    const product = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    process.stdout.write(String(product.applicationName || ""));
+  ' "$app/Contents/Resources/app/product.json" 2>/dev/null)" || name=""
+  [[ -n "$name" && "$name" != */* && -x "$app/Contents/Resources/app/bin/$name" ]] ||
+    die "the source app does not contain the VS Code command-line launcher"
+  printf '%s' "$name"
+}
+
+# Electron keeps its safeStorage key in the Keychain item "<package.json name> Safe Storage".
+# The original "Code Safe Storage" item only trusts Microsoft's signature, so a re-signed copy
+# would prompt for it (or be denied and lose logins). A distinct name gives each disguise an
+# item it creates and owns.
+set_keychain_name() {
+  local app="$1" service="$2" node_app="$3" executable="$4"
+  COW_PACKAGE_NAME="$service" run_bundled_node "$node_app" "$executable" -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+    pkg.name = process.env.COW_PACKAGE_NAME;
+    fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+  ' "$app/Contents/Resources/app/package.json" || die "could not set the Keychain name for this disguise"
+}
+
+delete_keychain_item() {
+  local service
+  service="$(keychain_service_for_slug "$1")"
+  if /usr/bin/security delete-generic-password -s "$service Safe Storage" -a "$service Key" >/dev/null 2>&1; then
+    note "Deleted Keychain item '$service Safe Storage'."
+  fi
+}
+
+# ---------------------------------------------------------------------------------------------
+# Per-disguise settings kept beside the profile
+# ---------------------------------------------------------------------------------------------
+read_profile_setting() {
+  local file="$1/$2"
+  if [[ -f "$file" ]]; then printf '%s' "$(<"$file")"; else printf '%s' "${3:-}"; fi
+}
+
+write_profile_setting() {
+  printf '%s' "$3" >"$1/$2"
+}
+
+clear_profile_setting() {
+  rm -f -- "$1/$2"
+}
+
+window_tint_enabled() {
+  [[ "$(read_profile_setting "$1" window-tint off)" == "on" ]]
+}
+
+resolve_folder() {
+  local folder="$1" control='[[:cntrl:]]'
+  [[ ! "$folder" =~ $control ]] || die "folder paths cannot contain control characters"
+  [[ -d "$folder" ]] || die "folder not found: $folder"
+  (cd "$folder" && pwd -P)
+}
+
+apply_pinned_folder() {
+  case "$2" in
+    set) write_profile_setting "$1" pinned-folder "$3" ;;
+    clear) clear_profile_setting "$1" pinned-folder ;;
+  esac
+}
+
+# Usage: apply_window_settings APP PROFILE TINT_OP COLOR TITLE_OP EMOJI [UPDATE_OP]
+# UPDATE_OP "set" pins "update.mode" to "none": a disguise must never update itself. VS Code's
+# updater would rewrite the clone under its own signature, leaving it unlaunchable and no longer
+# matching its recorded source; `code-o-ween refresh` is the only update path for a disguise.
+apply_window_settings() {
+  local app="$1" profile="$2" tint_op="$3" color="$4" title_op="$5" emoji="$6" update_op="${7:-keep}"
+  local executable settings hex="" managed_title result status=0 line
+  # The exact title Code-o-ween installed, if any: only that value is ever replaced or removed.
+  managed_title="$(read_profile_setting "$profile" window-title)"
+  [[ "$tint_op" != keep || "$title_op" != keep || "$update_op" != keep ]] || return 0
+  # settings.json, the window tint, and the emoji title are VS Code-style features.
+  [[ "$(family_for_app "$app")" == vscode ]] || return 0
+  executable="$(read_metadata "$app" executable Code)"
+  settings="$profile/user-data/User/settings.json"
+  [[ "$tint_op" != set ]] || hex="$(color_hex "$color")"
+  local errors_file
+  errors_file="$(mktemp "${TMPDIR:-/tmp}/code-o-ween-settings.XXXXXX")"
+  result="$(ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/$executable" - "$settings" "$tint_op" "$hex" "$title_op" "$emoji" "$update_op" "$managed_title" 2>"$errors_file" <<'JS'
+// Usage: - SETTINGS_FILE TINT_OP HEX TITLE_OP EMOJI UPDATE_OP MANAGED_TITLE   (ops: set | clear | keep)
+// MANAGED_TITLE is the window.title Code-o-ween installed earlier, or empty. Prints "title=set"
+// or "title=cleared" when it changed the title.
+// Edits only "workbench.colorCustomizations", "window.title" and "update.mode" in a VS Code
+// settings file (JSON with comments), leaving the rest of the file byte-for-byte intact.
+const fs = require("fs");
+const path = require("path");
+// Arguments follow "-" when the script is read from stdin.
+const [file, tintOp, hex, titleOp, emoji, updateOp, managedTitle] = process.argv.slice(process.argv[1] === "-" ? 2 : 1);
+const COLORS = "workbench.colorCustomizations";
+const TITLE = "window.title";
+const UPDATE = "update.mode";
+// VS Code's default window.title on macOS.
+const DEFAULT_TITLE = "${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}";
+
+function channel(value) {
+  const c = value / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function luminance(color) {
+  const n = parseInt(color.slice(1), 16);
+  return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
+}
+function foregroundFor(color) {
+  const l = luminance(color);
+  const contrastWhite = 1.05 / (l + 0.05);
+  const contrastDark = (l + 0.05) / (luminance("#1F1F1F") + 0.05);
+  return contrastWhite >= contrastDark ? "#FFFFFF" : "#1F1F1F";
+}
+function managedColors(color) {
+  const fg = foregroundFor(color);
+  return {
+    "titleBar.activeBackground": color,
+    "titleBar.activeForeground": fg,
+    "titleBar.inactiveBackground": color + "CC",
+    "titleBar.inactiveForeground": fg + "99",
+    "activityBar.background": color,
+    "activityBar.foreground": fg,
+    "activityBar.inactiveForeground": fg + "99",
+    "activityBar.activeBorder": fg,
+    "statusBar.background": color,
+    "statusBar.foreground": fg,
+  };
+}
+const MANAGED_KEYS = Object.keys(managedColors("#000000"));
+
+// Calls visit(kind, start, end) for strings, comments, and other characters, in order.
+function tokenize(text, visit) {
+  for (let i = 0; i < text.length;) {
+    const start = i;
+    if (text[i] === '"') {
+      i++;
+      while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
+      if (i >= text.length) throw new Error("unterminated string");
+      visit("string", start, ++i);
+    } else if (text.startsWith("//", i)) {
+      const n = text.indexOf("\n", i);
+      i = n < 0 ? text.length : n;
+      visit("comment", start, i);
+    } else if (text.startsWith("/*", i)) {
+      const n = text.indexOf("*/", i + 2);
+      if (n < 0) throw new Error("unterminated comment");
+      i = n + 2;
+      visit("comment", start, i);
+    } else {
+      visit("char", start, ++i);
+    }
+  }
+}
+
+function parseJsonc(text) {
+  let code = "";
+  tokenize(text, (kind, start, end) => { if (kind !== "comment") code += text.slice(start, end); });
+  let json = "";
+  tokenize(code, (kind, start, end) => {
+    if (kind === "char" && code[start] === "," && /^,\s*[}\]]/.test(code.slice(start))) return;
+    json += code.slice(start, end);
+  });
+  return JSON.parse(json);
+}
+
+function skipTrivia(text, i) {
+  for (;;) {
+    if (i < text.length && /\s/.test(text[i])) i++;
+    else if (text.startsWith("//", i)) { const n = text.indexOf("\n", i); i = n < 0 ? text.length : n; }
+    else if (text.startsWith("/*", i)) { const n = text.indexOf("*/", i + 2); if (n < 0) throw new Error(`unterminated comment at offset ${i}`); i = n + 2; }
+    else return i;
+  }
+}
+
+// Locates the properties of the object that starts at `start` (after trivia) and their value
+// ranges. Offsets are absolute, so a nested object is scanned with the same function.
+function scanObject(text, start) {
+  let i = start;
+  const fail = (message) => { throw new Error(`${message} at offset ${i}`); };
+  const readString = () => {
+    const begin = i++;
+    while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
+    if (i >= text.length) fail("unterminated string");
+    i++;
+    return JSON.parse(text.slice(begin, i));
+  };
+  const skipValue = () => {
+    i = skipTrivia(text, i);
+    const open = text[i];
+    if (open === '"') return void readString();
+    if (open === "{" || open === "[") {
+      const close = open === "{" ? "}" : "]";
+      i++;
+      for (;;) {
+        i = skipTrivia(text, i);
+        if (i >= text.length) fail("unexpected end of file");
+        if (text[i] === close) { i++; return; }
+        if (text[i] === ",") { i++; continue; }
+        if (open === "{") {
+          if (text[i] !== '"') fail("expected a property name");
+          readString();
+          i = skipTrivia(text, i);
+          if (text[i] !== ":") fail("expected ':'");
+          i++;
+        }
+        skipValue();
+      }
+    }
+    const literal = /^[^,\]}\s/]+/.exec(text.slice(i));
+    if (!literal) fail("unexpected token");
+    i += literal[0].length;
+  };
+
+  i = skipTrivia(text, i);
+  if (text[i] !== "{") fail("expected an object");
+  const objectStart = i++;
+  const properties = [];
+  for (;;) {
+    i = skipTrivia(text, i);
+    if (i >= text.length) fail("unexpected end of file");
+    if (text[i] === "}") break;
+    if (text[i] === ",") { i++; continue; }
+    if (text[i] !== '"') fail("expected a property name");
+    const keyStart = i;
+    const key = readString();
+    i = skipTrivia(text, i);
+    if (text[i] !== ":") fail("expected ':'");
+    i++;
+    i = skipTrivia(text, i);
+    const valueStart = i;
+    skipValue();
+    properties.push({ key, keyStart, valueStart, valueEnd: i });
+  }
+  const objectEnd = i;
+  // The indentation of the first property, for anything added to this object.
+  let indent = null;
+  if (properties.length) {
+    const lineStart = text.lastIndexOf("\n", properties[0].keyStart - 1) + 1;
+    const prefix = text.slice(lineStart, properties[0].keyStart);
+    if (/^\s*$/.test(prefix)) indent = prefix;
+  }
+  return { objectStart, objectEnd, end: objectEnd + 1, properties, indent };
+}
+
+// The top-level settings object, or null for an empty or comment-only file.
+function scan(text) {
+  const i = skipTrivia(text, 0);
+  if (i >= text.length) return null;
+  const settings = scanObject(text, i);
+  if (skipTrivia(text, settings.end) < text.length) throw new Error("unexpected content after settings");
+  return settings;
+}
+
+function serialize(value, indent) {
+  return JSON.stringify(value, null, 2).replace(/\n/g, "\n" + indent);
+}
+
+// Properties named `key` in `object`, in document order. VS Code keeps the last one, so that is
+// the one read and edited; every one of them goes when the key is removed.
+function occurrences(object, key) {
+  return object.properties.filter((property) => property.key === key);
+}
+
+// Removes `property` from `source`, taking its separating comma and, when it was alone on its
+// line, the whole line.
+function removeProperty(source, property) {
+  let start = property.keyStart;
+  let end = property.valueEnd;
+  const after = skipTrivia(source, property.valueEnd);
+  if (source[after] === ",") {
+    end = after + 1;
+  } else {
+    // Last property: take the comma before it when only whitespace separates them.
+    const before = source.slice(0, start).replace(/\s*$/, "");
+    if (before.endsWith(",")) start = before.length - 1;
+  }
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  const newline = source.indexOf("\n", end);
+  const lineEnd = newline < 0 ? source.length : newline;
+  if (/^\s*$/.test(source.slice(lineStart, start)) && /^\s*$/.test(source.slice(end, lineEnd))) {
+    start = lineStart;
+    end = Math.min(lineEnd + 1, source.length);
+  }
+  return source.slice(0, start) + source.slice(end);
+}
+
+// Sets `key` in `object` (a descriptor from scanObject) to `value`, or removes every occurrence
+// when `value` is undefined. Only the managed property changes; the rest of the object, its
+// comments included, stays as it was.
+function editObject(source, object, key, value, indent) {
+  const found = occurrences(object, key);
+  if (value === undefined) {
+    let result = source;
+    for (let remaining = found.length; remaining > 0; remaining--) {
+      const current = scanObject(result, object.objectStart);
+      result = removeProperty(result, occurrences(current, key).pop());
+    }
+    return result;
+  }
+  const entry = `${JSON.stringify(key)}: ${serialize(value, indent)}`;
+  const target = found[found.length - 1];
+  if (target) return source.slice(0, target.valueStart) + serialize(value, indent) + source.slice(target.valueEnd);
+  const last = object.properties[object.properties.length - 1];
+  if (!last) {
+    const outer = indent.slice(0, Math.max(0, indent.length - 2));
+    const inside = source.slice(object.objectStart + 1, object.objectEnd);
+    if (/^\s*$/.test(inside)) {
+      return source.slice(0, object.objectStart + 1) + `\n${indent}${entry}\n${outer}` + source.slice(object.objectEnd);
+    }
+    // Only comments inside: keep them, and add the property after them.
+    return source.slice(0, object.objectEnd).replace(/\s*$/, "") + `\n${indent}${entry}\n${outer}` + source.slice(object.objectEnd);
+  }
+  const after = skipTrivia(source, last.valueEnd);
+  return source[after] === ","
+    ? source.slice(0, after + 1) + `\n${indent}${entry}` + source.slice(after + 1)
+    : source.slice(0, last.valueEnd) + `,\n${indent}${entry}` + source.slice(last.valueEnd);
+}
+
+// Read through symlinks (dotfile setups); refuse broken links rather than replacing them.
+let target = file;
+let text = "";
+let fileMode = 0o644;
+let link = null;
+try { link = fs.lstatSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; }
+if (link) {
+  target = fs.realpathSync(file);
+  const stat = fs.statSync(target);
+  if (!stat.isFile()) throw new Error(`${target} is not a regular file`);
+  fileMode = stat.mode & 0o777;
+  text = fs.readFileSync(target, "utf8");
+}
+const bom = text.startsWith("﻿") ? "﻿" : "";
+text = text.slice(bom.length);
+
+// The whole document has to parse before anything is edited; a file VS Code cannot read is left
+// exactly as it is. Empty and comment-only files are fine.
+if (scan(text) !== null) parseJsonc(text);
+
+// The effective value of a top-level key: the last occurrence, as VS Code reads it.
+function readProperty(source, key) {
+  const settings = scan(source);
+  const property = settings && occurrences(settings, key).pop();
+  return property ? parseJsonc(source.slice(property.valueStart, property.valueEnd)) : undefined;
+}
+
+function editTopLevel(source, key, value) {
+  const settings = scan(source);
+  if (!settings) {
+    if (value === undefined) return source;
+    // Empty or comment-only file: keep the comments.
+    const prefix = source.trim() ? source.replace(/\s*$/, "\n") : "";
+    return `${prefix}{\n  ${JSON.stringify(key)}: ${serialize(value, "  ")}\n}\n`;
+  }
+  return editObject(source, settings, key, value, settings.indent ?? "  ");
+}
+
+// The last "workbench.colorCustomizations" object, rescanned after every edit because offsets move.
+function colorsObject(source) {
+  const settings = scan(source);
+  const property = settings && occurrences(settings, COLORS).pop();
+  if (!property) return null;
+  const value = parseJsonc(source.slice(property.valueStart, property.valueEnd));
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const inner = scanObject(source, property.valueStart);
+  return { settings, property, inner, indent: inner.indent ?? (settings.indent ?? "  ") + "  " };
+}
+
+let output = text;
+
+if (tintOp === "set" || tintOp === "clear") {
+  const colors = colorsObject(output);
+  if (tintOp === "set") {
+    if (!/^#[0-9A-Fa-f]{6}$/.test(hex || "")) throw new Error("expected a #RRGGBB color");
+    const managed = managedColors(hex.toUpperCase());
+    if (!colors) {
+      // Missing, or not an object: write a fresh one.
+      output = editTopLevel(output, COLORS, managed);
+    } else {
+      // Edit the managed keys inside the user's object, so unrelated colors and comments stay.
+      for (const [key, value] of Object.entries(managed)) {
+        const current = colorsObject(output);
+        output = editObject(output, current.inner, key, value, current.indent);
+      }
+    }
+  } else if (colors && MANAGED_KEYS.some((key) => occurrences(colors.inner, key).length)) {
+    for (const key of MANAGED_KEYS) {
+      const current = colorsObject(output);
+      output = editObject(output, current.inner, key, undefined, current.indent);
+    }
+    // Take the emptied object out only when it is the sole occurrence and holds nothing at all,
+    // not even a comment. An earlier duplicate it shadows, or a comment of the user's, keeps it.
+    const after = colorsObject(output);
+    const inside = output.slice(after.inner.objectStart + 1, after.inner.objectEnd);
+    if (after.inner.properties.length === 0 && /^\s*$/.test(inside) && occurrences(after.settings, COLORS).length === 1) {
+      output = removeProperty(output, after.property);
+    }
+  }
+} else if (tintOp !== "keep") {
+  throw new Error("tint op must be set, clear, or keep");
+}
+
+if (titleOp === "set" || titleOp === "clear") {
+  const current = readProperty(output, TITLE);
+  // Only the exact title Code-o-ween installed counts as ours; "Work ${dirty}..." is the user's.
+  const managed = typeof current === "string" && managedTitle !== "" && current === managedTitle;
+  if (titleOp === "set") {
+    if (!emoji) throw new Error("expected an emoji");
+    const wanted = `${emoji} ${DEFAULT_TITLE}`;
+    if (current === undefined || current === DEFAULT_TITLE || managed) {
+      if (current !== wanted) output = editTopLevel(output, TITLE, wanted);
+      console.log("title=set");
+    } else {
+      console.log("Note: window.title is customized in this disguise's settings, so the emoji is not added to it.");
+    }
+  } else if (managed) {
+    output = editTopLevel(output, TITLE, undefined);
+    console.log("title=cleared");
+  }
+} else if (titleOp !== "keep") {
+  throw new Error("title op must be set, clear, or keep");
+}
+
+if (updateOp === "set") {
+  if (readProperty(output, UPDATE) !== "none") output = editTopLevel(output, UPDATE, "none");
+} else if (updateOp !== "keep") {
+  throw new Error("update op must be set or keep");
+}
+
+if (output === text) process.exit(0);
+fs.mkdirSync(path.dirname(target), { recursive: true });
+const temp = `${target}.code-o-ween-${process.pid}-${Date.now()}`;
+try {
+  fs.writeFileSync(temp, bom + output, { flag: "wx", mode: fileMode });
+  fs.chmodSync(temp, fileMode);
+  fs.renameSync(temp, target);
+} catch (error) {
+  try { fs.unlinkSync(temp); } catch {}
+  throw error;
+}
+JS
+  )" || status=$?
+  if [[ $status -ne 0 ]]
+  then
+    # The reason goes to the caller, which decides whether this is fatal; the manager shows
+    # only Error: lines, so it must end up in the error and not in a separate warning.
+    local reason
+    reason="$(/usr/bin/grep -m1 -E '^[A-Za-z]*Error: ' "$errors_file" | /usr/bin/sed -E 's/^[A-Za-z]*Error: //')"
+    rm -f -- "$errors_file"
+    LAST_SETTINGS_ERROR="could not update the settings in $settings${reason:+: $reason}"
+    return 1
+  fi
+  rm -f -- "$errors_file"
+  # The editor reports what it did with the title; everything else it printed is for the user.
+  while IFS= read -r line; do
+    case "$line" in
+      title=set) write_profile_setting "$profile" window-title "$emoji $VSCODE_DEFAULT_TITLE" ;;
+      title=cleared) clear_profile_setting "$profile" window-title ;;
+      "") ;;
+      *) note "$line" ;;
+    esac
+  done <<<"$result"
+}
+LAST_SETTINGS_ERROR=""
+# VS Code's default window.title on macOS, as the editor knows it.
+VSCODE_DEFAULT_TITLE='${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}'
+
+# --- Generated scripts ----------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------------------------
+# Options shared by create and update
+# ---------------------------------------------------------------------------------------------
+require_value() {
+  [[ $# -ge 2 ]] || die "$1 needs a value"
+}
+
+# Reads one option into the caller's color/icon_mode/icon_value/folder_action/folder/
+# window_tint variables and reports how many arguments it took in "consumed".
+parse_disguise_option() {
+  consumed=2
+  case "$1" in
+    --color) require_value "$@"; color="$2" ;;
+    --emoji|--icon|--built-in-icon)
+      [[ -z "$icon_mode" ]] || die "choose only one of --emoji, --icon, or --built-in-icon"
+      case "$1" in
+        --emoji) require_value "$@"; icon_mode=emoji; icon_value="$2" ;;
+        --icon) require_value "$@"; icon_mode=image; icon_value="$2" ;;
+        --built-in-icon) icon_mode=built-in; icon_value=""; consumed=1 ;;
+      esac
+      ;;
+    --folder|--no-folder)
+      [[ -z "$folder_action" ]] || die "use either --folder or --no-folder, once"
+      if [[ "$1" == --folder ]]; then require_value "$@"; folder_action="set"; folder="$2"; else folder_action="clear"; consumed=1; fi
+      ;;
+    --window-color)
+      require_value "$@"
+      [[ "$2" == on || "$2" == off ]] || die "--window-color needs on or off"
+      window_tint="$2"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_disguise_options() {
+  local canonical
+  if [[ -n "$color" ]]; then
+    canonical="$(canonical_color "$color")" || die "unknown color '$color' (run 'code-o-ween colors')"
+    color="$canonical"
+  fi
+  [[ "$icon_mode" != emoji || -n "$icon_value" ]] || die "--emoji needs a value"
+  [[ "$icon_mode" != image || -f "$icon_value" ]] || die "icon file not found: $icon_value"
+  [[ "$folder_action" != set ]] || folder="$(resolve_folder "$folder")"
+}
+
+# The window tint, the emoji window title, and a pinned folder all rely on VS Code's settings
+# and its folder-opening CLI, so they are refused for other apps rather than silently ignored.
+assert_vscode_only_options() {
+  local family="$1" label="$2"
+  [[ -z "$folder_action" || "$family" == vscode ]] || die "--folder is only available for VS Code-style apps (this is $label)"
+  [[ -z "$window_tint" || "$family" == vscode ]] || die "--window-color is only available for VS Code-style apps (this is $label)"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Generated scripts
+# ---------------------------------------------------------------------------------------------
+
+# The bundle's CFBundleExecutable. It starts the original executable with the arguments (or
+# environment) that keep this disguise's data apart.
+write_launcher() {
+  local launcher="$1" original_executable="$2" profile_path="$3" family="$4" extensions_mode="${5:-shared}" slug="${6:-}"
+  local quoted_profile quoted_executable isolation_lines marker_lines=""
+  printf -v quoted_profile '%q' "$profile_path"
+  printf -v quoted_executable '%q' "$original_executable"
+
+  case "$family" in
+    vscode)
+      isolation_lines='mkdir -p "$profile_root/user-data"
+args=(--user-data-dir "$profile_root/user-data")'
+      if [[ "$extensions_mode" == "isolated" ]]; then
+        isolation_lines="$isolation_lines"$'\n''args+=(--extensions-dir "$profile_root/extensions")'
+      fi
+      isolation_lines="$isolation_lines"$'\n''# Opened from Finder or the Dock: open the pinned folder, if one is set and still exists.
+if [[ $# -eq 0 && -f "$profile_root/pinned-folder" ]]; then
+  pinned_folder="$(<"$profile_root/pinned-folder")"
+  if [[ -d "$pinned_folder" ]]; then
+    set -- "$pinned_folder"
+  fi
+fi
+exec "$executable" "${args[@]}" "$@"' ;;
+    chromium)
+      isolation_lines='mkdir -p "$profile_root/user-data"
+exec "$executable" --user-data-dir="$profile_root/user-data" "$@"' ;;
+    firefox)
+      isolation_lines='mkdir -p "$profile_root/profile"
+exec "$executable" --profile "$profile_root/profile" "$@"' ;;
+    home)
+      # Library (settings, caches, preferences) stays private; the usual folders are linked so
+      # file dialogs and drag-and-drop still reach the real ones.
+      isolation_lines='private_home="$profile_root/home"
+mkdir -p "$private_home"
+for folder in Desktop Documents Downloads Movies Music Pictures; do
+  if [[ -n "${HOME:-}" && -d "$HOME/$folder" && ! -e "$private_home/$folder" ]]; then
+    ln -s "$HOME/$folder" "$private_home/$folder" 2>/dev/null || true
+  fi
+done
+export HOME="$private_home"
+exec "$executable" "$@"' ;;
+    *) die "unknown isolation family: $family" ;;
+  esac
+
+  # The original Electron executable must keep its name: Electron locates
+  # "Frameworks/<executable> Helper.app" from it and aborts otherwise.
+  # A settings folder that went missing is recreated with its ownership marker, so the other
+  # commands keep accepting it; an existing folder is never claimed here.
+  [[ -z "$slug" ]] || marker_lines="$(profile_guard_lines "$slug" "$family")"
+  cat >"$launcher" <<EOF
+#!/bin/bash
+set -e
+executable="\$(cd "\$(dirname "\$0")" && pwd)/"$quoted_executable
+if [[ "\${ELECTRON_RUN_AS_NODE:-}" == "1" ]]; then
+  exec "\$executable" "\$@"
+fi
+profile_root=$quoted_profile
+$marker_lines
+$isolation_lines
+EOF
+  chmod +x "$launcher"
+}
+
+# Lines for a generated script, run before it touches the settings folder: refuse a symbolic
+# link and a folder Code-o-ween does not own (the same rules create and update apply, so a
+# profile swapped for a link to someone else's folder cannot be used by a launch), and recreate
+# a missing folder with its marker and, for VS Code-style apps, update.mode pinned, so a recovered
+# profile cannot update the clone before the next refresh. An existing folder is never claimed.
+# Launched from Finder there is no terminal, so refusals also show an alert.
+profile_guard_lines() {
+  local slug="$1" family="${2:-}" quoted_slug
+  printf -v quoted_slug '%q' "$slug"
+  cat <<EOF
+refuse() {
+  echo "Code-o-ween: \$1" >&2
+  /usr/bin/osascript -e "display alert \"Code-o-ween\" message \"\$1\"" >/dev/null 2>&1 || true
+  exit 1
+}
+if [[ -L "\$profile_root" ]]; then refuse "the settings folder \$profile_root is a symbolic link; refusing to start"; fi
+if [[ ! -e "\$profile_root" ]]; then
+  mkdir -p "\$profile_root" && printf '%s' $quoted_slug >"\$profile_root/$PROFILE_MARKER"
+EOF
+  if [[ "$family" == vscode ]]; then
+    cat <<'EOF'
+  mkdir -p "$profile_root/user-data/User"
+  [[ -e "$profile_root/user-data/User/settings.json" ]] || printf '{\n  "update.mode": "none"\n}\n' >"$profile_root/user-data/User/settings.json"
+EOF
+  fi
+  cat <<EOF
+fi
+if [[ "\$(cat "\$profile_root/$PROFILE_MARKER" 2>/dev/null)" != $quoted_slug ]]; then
+  refuse "\$profile_root was not created by Code-o-ween for $quoted_slug; run: code-o-ween refresh $quoted_slug"
+fi
+EOF
+}
+
+# One command at a time per disguise. Two creates for the same name could otherwise both pass
+# the existence check, and the second mv would land its new.app inside the first bundle, with
+# both reporting success. mkdir is atomic, which makes the lock folder the lock.
+lock_slug() {
+  local lock="$1/.lock-$2"
+  mkdir "$lock" 2>/dev/null ||
+    die "another code-o-ween command is working on '$2'; try again in a moment (if none is, remove $lock)"
+  SLUG_LOCK="$lock"
+}
+
+unlock_slug() {
+  [[ -z "${SLUG_LOCK:-}" ]] || rmdir "$SLUG_LOCK" 2>/dev/null || true
+  SLUG_LOCK=""
+}
+SLUG_LOCK=""
+
+# The terminal shortcut in BIN_ROOT. VS Code-style apps get their own CLI (code-NAME ...);
+# other apps are opened through Launch Services, which hands arguments to a running disguise.
+write_shortcut() {
+  local slug="$1" app="$2"
+  local shortcut family cli extensions_mode quoted_profile quoted_cli quoted_app shortcut_tmp extension_lines=""
+  shortcut="$(shortcut_for_app "$app" "$slug")"
+  family="$(family_for_app "$app")"
+  assert_shortcut_owned "$slug" "$shortcut"
+  mkdir -p "$BIN_ROOT"
+  shortcut_tmp="$(mktemp "$BIN_ROOT/.$shortcut.XXXXXX")"
+  if [[ "$family" == vscode ]]; then
+    cli="$(read_metadata "$app" cli "Contents/Resources/app/bin/code")"
+    extensions_mode="$(read_metadata "$app" extensions shared)"
+    printf -v quoted_profile '%q' "$(profile_for_app "$app" "$slug")"
+    printf -v quoted_cli '%q' "$app/$cli"
+    if [[ "$extensions_mode" == "isolated" ]]; then
+      extension_lines='args+=(--extensions-dir "$profile_root/extensions")'
+    fi
+    cat >"$shortcut_tmp" <<EOF
+#!/bin/bash
+# Managed by Code-o-ween: $slug
+set -e
+profile_root=$quoted_profile
+$(profile_guard_lines "$slug" vscode)
+mkdir -p "\$profile_root/user-data"
+args=(--user-data-dir "\$profile_root/user-data")
+$extension_lines
+exec $quoted_cli "\${args[@]}" "\$@"
+EOF
+  else
+    printf -v quoted_app '%q' "$app"
+    cat >"$shortcut_tmp" <<EOF
+#!/bin/bash
+# Managed by Code-o-ween: $slug
+set -e
+if [[ \$# -eq 0 ]]; then
+  exec /usr/bin/open -a $quoted_app
+fi
+exec /usr/bin/open -n -a $quoted_app --args "\$@"
+EOF
+  fi
+  chmod +x "$shortcut_tmp"
+  assert_shortcut_owned "$slug" "$shortcut"
+  mv -f "$shortcut_tmp" "$BIN_ROOT/$shortcut"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------------------------
+create_instance() (
+  require_macos
+
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "create requires a NAME"
+  validate_name "$name"
+  shift || true
+
+  local color="" icon_mode="" icon_value="" folder_action="" folder="" window_tint="" consumed
+  local kind="" extensions_mode="" source="" force="false" trust_source="false"
+  while [[ $# -gt 0 ]]; do
+    if parse_disguise_option "$@"; then
+      shift "$consumed"
+      continue
+    fi
+    case "$1" in
+      --app|--kind) require_value "$@"; kind="$2"; shift 2 ;;
+      --extensions) require_value "$@"; extensions_mode="$2"; shift 2 ;;
+      --source) require_value "$@"; source="$2"; shift 2 ;;
+      --trust-source) trust_source="true"; shift ;;
+      --force) force="true"; shift ;;
+      *) die "unknown create option: $1" ;;
+    esac
+  done
+  validate_disguise_options
+  [[ -n "$color" ]] || color=blue
+  [[ -n "$icon_mode" ]] || icon_mode=built-in
+  case "$extensions_mode" in ""|shared|isolated|none) ;; *) die "--extensions must be shared or isolated" ;; esac
+
+  # Which app, and which copy of it.
+  local detected
+  if [[ -z "$source" ]]; then
+    [[ -n "$kind" ]] || kind="vscode"
+    load_kind "$kind"
+    # Refused before the source is even looked for, so the answer is "does not work", not
+    # "not installed", on a Mac without the app.
+    [[ "$KIND_STATUS" != broken ]] || assert_kind_usable
+    source="$(default_source_app)"
+  fi
+  [[ -d "$source/Contents/MacOS" && -f "$source/Contents/Info.plist" ]] || die "not a macOS app bundle: $source"
+  source="$(cd "$source" && pwd -P)"
+  detected="$(detect_kind "$source")"
+  local detected_team=""
+  if [[ "$detected" != generic ]]; then
+    # An app known not to work is refused whatever --app says, --app generic included.
+    load_kind "$detected"
+    [[ "$KIND_STATUS" != broken ]] || assert_kind_usable
+    detected_team="$KIND_TEAM_ID"
+  fi
+  if [[ -z "$kind" ]]; then
+    kind="$detected"
+  elif [[ "$kind" != "$detected" && "$kind" != generic && "$detected" != generic ]]; then
+    # A recognized app under a different recipe is almost certainly a mistake.
+    load_kind "$detected"
+    die "$(basename "$source") is $KIND_LABEL; pass --app $detected or omit --app"
+  fi
+  configure_kind_for_source "$kind" "$source"
+  # A recognized bundle keeps its publisher requirement under --app generic too; only
+  # --trust-source relaxes it.
+  [[ -z "$detected_team" ]] || KIND_TEAM_ID="$detected_team"
+  assert_kind_usable
+  assert_vscode_only_options "$KIND_FAMILY" "$KIND_LABEL"
+  [[ ! -f "$(metadata_path "$source" slug)" ]] || die "use the original $KIND_LABEL installation as --source, not a disguise"
+
+  local executable
+  executable="$(source_executable "$source")"
+  verify_source_app "$source" "$trust_source" "$KIND_TEAM_ID"
+
+  local cli_relative="" cli_name shortcut
+  if [[ "$KIND_FAMILY" == vscode ]]; then
+    is_vscode_style_app "$source" || die "$source does not look like a VS Code-style app"
+    cli_name="$(product_application_name "$source" "$executable")"
+    cli_relative="Contents/Resources/app/bin/$cli_name"
+    shortcut="$cli_name"
+    [[ -n "$extensions_mode" && "$extensions_mode" != none ]] || extensions_mode="shared"
+  else
+    [[ "$extensions_mode" != isolated ]] || die "--extensions isolated is only available for VS Code-style apps"
+    extensions_mode="none"
+    shortcut="$KIND_SHORTCUT"
+  fi
+
+  local slug app existing existing_kind icon plist tmp_app backup_app final_icon profile_path source_icon
+  local target_root transaction installed=false committed=false
+  slug="$(slugify "$name")"
+  [[ ${#slug} -le 50 ]] || die "NAME is too long (the normalized name must be 50 characters or fewer)"
+  shortcut="$shortcut-$slug"
+  existing="$(app_for_slug "$slug" || true)"
+  if [[ -n "$existing" ]]; then
+    existing_kind="$(kind_for_app "$existing")"
+    if [[ "$existing_kind" != "$kind" ]]; then
+      die "the name '$name' is already used by a $(label_for_app "$existing") disguise at $existing; choose another name"
+    fi
+    [[ "$force" == "true" ]] || die "disguise '$name' already exists at $existing (use --force to rebuild it)"
+    assert_stopped "$existing"
+    [[ "$source" != "$existing" ]] || die "source must be the original app, not this disguise"
+    [[ "$(shortcut_for_app "$existing" "$slug")" == "$shortcut" ]] || assert_shortcut_owned "$slug" "$(shortcut_for_app "$existing" "$slug")"
+  fi
+  assert_shortcut_owned "$slug" "$shortcut"
+
+  # Disguises stay in the folder they were created in; new ones go to APP_ROOT.
+  mkdir -p "$APP_ROOT" "$DATA_ROOT"
+  DATA_ROOT="$(cd "$DATA_ROOT" && pwd -P)"
+  if [[ -n "$existing" ]]; then
+    target_root="$(cd "$(dirname "$existing")" && pwd -P)"
+  else
+    target_root="$(cd "$APP_ROOT" && pwd -P)"
+  fi
+  app="$target_root/$KIND_PREFIX - $name.app"
+  profile_path="$(profile_for_app "${existing:-$app}" "$slug")"
+  [[ "$KIND_FAMILY" != vscode ]] || assert_socket_path_fits "$profile_path"
+  claim_profile "$profile_path" "$slug"
+  lock_slug "$target_root" "$slug"
+  transaction="$(mktemp -d "$target_root/.transaction.XXXXXX")"
+  tmp_app="$transaction/new.app"
+  backup_app=""
+  # Runs from the EXIT trap below.
+  # shellcheck disable=SC2329
+  cleanup_create() {
+    local status=$?
+    trap - EXIT
+    unlock_slug
+    if [[ "$committed" != true ]]; then
+      if [[ "$installed" == true ]]; then mv "$app" "$transaction/failed.app" || exit 1; fi
+      if [[ -n "$backup_app" && -e "$backup_app" ]]; then
+        mv "$backup_app" "$existing" || { note "Recovery copy retained at $backup_app"; exit 1; }
+      fi
+    fi
+    rm -rf -- "$transaction"
+    exit "$status"
+  }
+  trap cleanup_create EXIT
+
+  local verb="Creating"
+  [[ -z "$existing" ]] || verb="Rebuilding"
+  note "$verb '$name' from $(basename "$source")..."
+  copy_app_bundle "$source" "$tmp_app"
+
+  plist="$tmp_app/Contents/Info.plist"
+  write_launcher "$tmp_app/Contents/MacOS/$LAUNCHER_NAME" "$executable" "$profile_path" "$KIND_FAMILY" "$extensions_mode" "$slug"
+  if [[ "$KIND_FAMILY" == vscode ]]; then
+    set_keychain_name "$tmp_app" "$(keychain_service_for_slug "$slug")" "$source" "$executable"
+  fi
+
+  final_icon="$tmp_app/Contents/Resources/$METADATA_PREFIX.icns"
+  case "$icon_mode" in
+    image) render_to_icns "$icon_value" "$final_icon" ;;
+    emoji) render_emoji_icon "$icon_value" "$color" "$final_icon" ;;
+    built-in) built_in_icon "$color" "$final_icon" "$KIND_FAMILY" "$source" ;;
+  esac
+
+  /usr/bin/plutil -replace CFBundleExecutable -string "$LAUNCHER_NAME" "$plist"
+  /usr/bin/plutil -replace CFBundleIdentifier -string "$BUNDLE_ID_PREFIX.$slug" "$plist"
+  # CFBundleName must stay unchanged: Electron derives "Frameworks/<CFBundleName> Helper.app"
+  # from it and aborts at launch if the helper cannot be found.
+  /usr/bin/plutil -replace CFBundleDisplayName -string "$KIND_PREFIX - $name" "$plist" 2>/dev/null || \
+    /usr/bin/plutil -insert CFBundleDisplayName -string "$KIND_PREFIX - $name" "$plist"
+  /usr/bin/plutil -replace CFBundleIconFile -string "$METADATA_PREFIX.icns" "$plist" 2>/dev/null || \
+    /usr/bin/plutil -insert CFBundleIconFile -string "$METADATA_PREFIX.icns" "$plist"
+  # An asset-catalog icon would take precedence over CFBundleIconFile.
+  /usr/bin/plutil -remove CFBundleIconName "$plist" >/dev/null 2>&1 || true
+
+  write_metadata "$tmp_app" slug "$slug"
+  write_metadata "$tmp_app" name "$name"
+  write_metadata "$tmp_app" kind "$kind"
+  write_metadata "$tmp_app" family "$KIND_FAMILY"
+  write_metadata "$tmp_app" label "$KIND_LABEL"
+  write_metadata "$tmp_app" color "$color"
+  write_metadata "$tmp_app" extensions "$extensions_mode"
+  write_metadata "$tmp_app" source "$source"
+  write_metadata "$tmp_app" trust-source "$trust_source"
+  write_metadata "$tmp_app" executable "$executable"
+  write_metadata "$tmp_app" icon-kind "$icon_mode"
+  [[ "$icon_mode" != emoji ]] || write_metadata "$tmp_app" emoji "$icon_value"
+  write_metadata "$tmp_app" profile "$profile_path"
+  write_metadata "$tmp_app" shortcut "$shortcut"
+  write_metadata "$tmp_app" cli "$cli_relative"
+
+  sign_disguise "$tmp_app" "$slug" "$executable" "$transaction"
+
+  if [[ -n "$existing" && -e "$existing" ]]; then
+    assert_stopped "$existing"
+    backup_app="$transaction/previous.app"
+    mv "$existing" "$backup_app"
+  fi
+  if [[ -e "$app" && "$app" != "$existing" ]]; then
+    die "an app named '$app' already exists"
+  fi
+  if [[ "$KIND_FAMILY" == vscode ]]; then
+    # Settings are applied before the new bundle is committed, so a disguise is never installed
+    # without update.mode pinned: a settings file that cannot be edited fails the whole create
+    # and the previous app comes back. A brand-new disguise must not inherit a pin left in a
+    # kept profile, and starts tinted.
+    [[ -n "$folder_action" || -n "$existing" ]] || folder_action=clear
+    [[ -n "$window_tint" || -n "$existing" ]] || window_tint=on
+    local tint_state tint_op=keep title_op=clear
+    tint_state="${window_tint:-$(read_profile_setting "$profile_path" window-tint off)}"
+    if [[ "$tint_state" == on ]]; then
+      tint_op="set"
+    elif [[ "$window_tint" == off ]]; then
+      # Only an explicit "off" removes colors: the user may have set their own.
+      tint_op="clear"
+    fi
+    [[ "$icon_mode" != emoji ]] || title_op="set"
+    apply_window_settings "$tmp_app" "$profile_path" "$tint_op" "$color" "$title_op" "$icon_value" set ||
+      die "the disguise was not installed: $LAST_SETTINGS_ERROR (fix or move aside that file)"
+    apply_pinned_folder "$profile_path" "$folder_action" "$folder"
+    [[ -z "$window_tint" ]] || write_profile_setting "$profile_path" window-tint "$window_tint"
+  fi
+
+  mv "$tmp_app" "$app"
+  installed=true
+  # mv into an existing folder would have nested the bundle instead of failing.
+  [[ -f "$app/Contents/Info.plist" && ! -e "$app/new.app" ]] || die "the app at '$app' changed while it was being built"
+  # The new shortcut goes in before the old one goes away, so a failure here leaves the
+  # previous disguise with its command.
+  write_shortcut "$slug" "$app"
+  committed=true
+  if [[ -n "$backup_app" && "$(shortcut_for_app "$backup_app" "$slug")" != "$shortcut" ]]; then
+    # The shortcut prefix changed (for example code-NAME became codium-NAME); drop the old one.
+    rm -f -- "$BIN_ROOT/$(shortcut_for_app "$backup_app" "$slug")"
+  fi
+
+  if [[ -n "$existing" ]]; then
+    note "Rebuilt: $app"
+  else
+    note "Created: $app"
+  fi
+  note "Open it from Finder/Dock, or run: $shortcut"
+  if [[ ":$PATH:" != *":$BIN_ROOT:"* ]]; then
+    note "Tip: add $BIN_ROOT to PATH to use the $shortcut shortcut."
+  fi
+)
+
+update_instance() {
+  require_macos
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "update requires a NAME"
+  shift
+
+  local color="" icon_mode="" icon_value="" folder_action="" folder="" window_tint="" consumed
+  while [[ $# -gt 0 ]]; do
+    parse_disguise_option "$@" || die "unknown update option: $1"
+    shift "$consumed"
+  done
+  [[ -n "$color$icon_mode$folder_action$window_tint" ]] || die "nothing to update (see 'code-o-ween help')"
+  validate_disguise_options
+
+  local app current_color kind family profile display_name rebuild=false
+  app="$(require_instance "$name")"
+  current_color="$(read_metadata "$app" color blue)"
+  kind="$(read_metadata "$app" icon-kind image)"
+  family="$(family_for_app "$app")"
+  profile="$(profile_for_app "$app" "$(read_metadata "$app" slug)")"
+  display_name="$(name_for_app "$app")"
+  assert_vscode_only_options "$family" "$(label_for_app "$app")"
+  # The recorded profile path is data from the bundle; the same guards as create apply before
+  # anything is written there, on both the rebuild and the direct path.
+  # claim_profile runs the same guards and recreates a missing folder with its marker; a
+  # recreated VS Code profile also gets update.mode pinned again (a no-op otherwise).
+  claim_profile "$profile" "$(read_metadata "$app" slug)"
+  [[ "$family" != vscode ]] || apply_window_settings "$app" "$profile" keep "" keep "" set || die "nothing was changed: $LAST_SETTINGS_ERROR"
+  [[ -n "$color" ]] || color="$current_color"
+
+  [[ -z "$icon_mode" && "$color" == "$current_color" ]] || rebuild=true
+
+  if [[ "$rebuild" == true ]]; then
+    assert_stopped "$app"
+    if [[ -z "$icon_mode" && "$color" != "$current_color" && "$kind" != emoji && "$kind" != built-in ]]; then
+      note "Note: this disguise uses a custom image icon, so the color does not change its icon."
+    fi
+    local -a extra_args=()
+    case "$folder_action" in
+      set) extra_args+=(--folder "$folder") ;;
+      clear) extra_args+=(--no-folder) ;;
+    esac
+    [[ -z "$window_tint" ]] || extra_args+=(--window-color "$window_tint")
+    rebuild_instance "$app" "$color" "${icon_mode:-keep}" "$icon_value" "" ${extra_args[@]+"${extra_args[@]}"}
+    return
+  fi
+
+  # The settings edit is the step that can fail, so it goes first; the folder changes only once
+  # it has succeeded, and nothing is half-applied when the command reports failure.
+  if [[ -n "$window_tint" ]]; then
+    if [[ "$window_tint" == on ]]; then
+      apply_window_settings "$app" "$profile" set "$color" keep "" || die "nothing was changed: $LAST_SETTINGS_ERROR"
+    else
+      apply_window_settings "$app" "$profile" clear "" keep "" || die "nothing was changed: $LAST_SETTINGS_ERROR"
+    fi
+    write_profile_setting "$profile" window-tint "$window_tint"
+    note "Window color for '$display_name' turned $window_tint."
+  fi
+  case "$folder_action" in
+    set) apply_pinned_folder "$profile" set "$folder"; note "Pinned '$display_name' to $folder (takes effect the next time it is opened)." ;;
+    clear) apply_pinned_folder "$profile" clear; note "Removed the pinned folder from '$display_name'." ;;
+  esac
+}
+
+list_instances() {
+  printf '%-18s %-24s %-8s %-10s %s\n' "NAME" "APP" "COLOR" "EXTENSIONS" "PATH"
+  local app name color mode folder found="false"
+  while IFS= read -r -d '' app; do
+    found="true"
+    name="$(name_for_app "$app")"
+    color="$(read_metadata "$app" color blue)"
+    mode="$(read_metadata "$app" extensions shared)"
+    [[ "$mode" != none ]] || mode="-"
+    printf '%-18s %-24s %-8s %-10s %s\n' "$name" "$(label_for_app "$app")" "$color" "$mode" "$app"
+    folder="$(read_profile_setting "$(profile_for_app "$app" "$(read_metadata "$app" slug)")" pinned-folder)"
+    [[ -z "$folder" ]] || printf '%-18s %-24s %-8s %-10s %s\n' "" "" "" "" "↳ $folder"
+  done < <(find_instances)
+  [[ "$found" == "true" ]] || note "(no disguises yet)"
+}
+
+# Lists the recipes. --porcelain prints tab-separated: id, label, found (yes/no),
+# extensions (yes/no), source path.
+list_kinds() {
+  local porcelain="false" kind
+  [[ "${1:-}" != "--porcelain" ]] || porcelain="true"
+  [[ "$porcelain" == "true" ]] || printf '%-16s %-30s %-18s %-17s %s\n' "APP" "NAME" "ISOLATION" "STATUS" "FOUND AT"
+  for kind in $ALL_KINDS; do
+    (
+      local source extensions="no" found="no"
+      load_kind "$kind"
+      # die exits the substitution's subshell, so the fallback has to live outside it.
+      if source="$(default_source_app 2>/dev/null)"; then found="yes"; else source=""; fi
+      [[ "$KIND_FAMILY" != vscode ]] || extensions="yes"
+      if [[ "$porcelain" == "true" ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$KIND_LABEL" "$found" "$extensions" "$source" "$KIND_STATUS"
+      elif [[ "$kind" == generic ]]; then
+        printf '%-16s %-30s %-18s %-17s %s\n' "$kind" "$KIND_LABEL" "$(family_description "$KIND_FAMILY")" "$(status_description "$KIND_STATUS")" "(pass --source)"
+      else
+        printf '%-16s %-30s %-18s %-17s %s\n' "$kind" "$KIND_LABEL" "$(family_description "$KIND_FAMILY")" "$(status_description "$KIND_STATUS")" "${source:--}"
+      fi
+    )
+  done
+}
+
+open_instance() {
+  require_macos
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "open requires a NAME"
+  shift || true
+  [[ "${1:-}" != "--" ]] || shift
+  local slug app
+  slug="$(slugify "$name")"
+  app="$(app_for_slug "$slug" || true)"
+  [[ -n "$app" ]] || die "disguise '$name' does not exist"
+  if [[ $# -eq 0 ]]; then
+    # The launcher opens the pinned folder only when the disguise starts. A disguise whose
+    # last window was closed is still running, and activating it would only show an empty
+    # window, so the folder is handed over as a document, which reaches a running copy too.
+    local pinned_folder
+    pinned_folder="$(read_profile_setting "$(profile_for_app "$app" "$slug")" pinned-folder)"
+    if [[ -n "$pinned_folder" && -d "$pinned_folder" ]]; then
+      /usr/bin/open -a "$app" "$pinned_folder"
+    else
+      /usr/bin/open "$app"
+    fi
+    return
+  fi
+  write_shortcut "$slug" "$app"
+  "$BIN_ROOT/$(shortcut_for_app "$app" "$slug")" "$@"
+}
+
+# Rebuilds a disguise through create_instance, carrying over everything that is not being
+# changed. ICON_MODE of "keep" reproduces an emoji or built-in icon from the recorded metadata
+# so that a recolor recolors it; a custom image is copied out and back in.
+rebuild_instance() {
+  local app="$1" color="$2" icon_mode="$3" icon_value="$4" source="$5" kept_icon=""
+  shift 5
+  [[ -n "$color" ]] || color="$(read_metadata "$app" color blue)"
+  [[ -n "$source" ]] || source="$(read_metadata "$app" source)"
+  if [[ "$icon_mode" == keep ]]; then
+    icon_mode="$(read_metadata "$app" icon-kind image)"
+    icon_value="$(read_metadata "$app" emoji "")"
+    if [[ "$icon_mode" != emoji && "$icon_mode" != built-in || ( "$icon_mode" == emoji && -z "$icon_value" ) ]]; then
+      # Custom images, and disguises from before icon kinds were recorded, keep their ICNS.
+      icon_mode=image
+      kept_icon="$(mktemp -d "${TMPDIR:-/tmp}/code-o-ween-icon.XXXXXX")"
+      # Expanded now on purpose: the path is shell-quoted into the trap, so it survives any
+      # later change to the variable.
+      # shellcheck disable=SC2064
+      trap "rm -rf -- $(printf '%q' "$kept_icon")" EXIT
+      icon_value="$kept_icon/current.icns"
+      cp "$(metadata_path "$app" icns)" "$icon_value"
+    fi
+  fi
+
+  local -a args=(--app "$(kind_for_app "$app")" --color "$color" --source "$source" --force)
+  args+=(--extensions "$(read_metadata "$app" extensions shared)")
+  # Trust was given for the recorded source; a different --source gets normal verification.
+  if [[ "$(read_metadata "$app" trust-source false)" == true && "$source" == "$(read_metadata "$app" source)" ]]; then
+    args+=(--trust-source)
+  fi
+  case "$icon_mode" in
+    emoji) args+=(--emoji "$icon_value") ;;
+    image) args+=(--icon "$icon_value") ;;
+    built-in) args+=(--built-in-icon) ;;
+  esac
+  # Not called from a condition: that would disable errexit inside create_instance.
+  create_instance "$(name_for_app "$app")" "${args[@]}" "$@"
+  if [[ -n "$kept_icon" ]]; then
+    rm -rf -- "$kept_icon"
+    trap - EXIT
+  fi
+}
+
+refresh_one() {
+  local name="$1" source_override="${2:-}" trust="${3:-false}" app
+  local -a trust_args=()
+  [[ "$trust" != true ]] || trust_args=(--trust-source)
+  app="$(require_instance "$name")"
+  if [[ -n "$source_override" ]]; then
+    [[ -d "$source_override" ]] || die "not a macOS app bundle: $source_override"
+    source_override="$(cd "$source_override" && pwd -P)"
+  fi
+  assert_stopped "$app"
+  [[ -n "$source_override" || -n "$(read_metadata "$app" source)" ]] ||
+    die "disguise '$(name_for_app "$app")' does not record its source app; pass --source"
+  rebuild_instance "$app" "" keep "" "$source_override" ${trust_args[@]+"${trust_args[@]}"}
+}
+
+refresh_instances() {
+  require_macos
+  local target="${1:-}" source="" trust=false
+  [[ -n "$target" ]] || die "refresh requires a NAME or --all"
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source) [[ $# -ge 2 ]] || die "--source needs an app path"; source="$2"; shift 2 ;;
+      # Fresh consent for a new source (stored trust applies only to the recorded one).
+      --trust-source) trust=true; shift ;;
+      *) die "unknown refresh option: $1" ;;
+    esac
+  done
+  if [[ "$target" != "--all" ]]; then
+    refresh_one "$target" "$source" "$trust"
+    return
+  fi
+  [[ "$trust" != true ]] || die "--trust-source applies to a single disguise; refresh it by NAME"
+
+  local app slug
+  local -a slugs=() failed=() source_args=()
+  while IFS= read -r -d '' app; do
+    slug="$(read_metadata "$app" slug)"
+    if is_slug "$slug"; then slugs+=("$slug"); else warn "skipping $app: its recorded name '$slug' is not valid"; fi
+  done < <(find_instances)
+  [[ ${#slugs[@]} -gt 0 ]] || die "there are no disguises to refresh"
+  # Disguises may come from different apps, so one --source cannot apply to all of them.
+  [[ -z "$source" || ${#slugs[@]} -eq 1 ]] || die "--source applies to a single disguise; refresh it by NAME"
+  [[ -z "$source" ]] || source_args=(--source "$source")
+  # Each disguise refreshes in its own process: one failure must not stop the others, and
+  # calling the rebuild from a condition here would disable errexit inside it, so a disguise
+  # that failed to rebuild would be reported as refreshed.
+  for slug in "${slugs[@]}"; do
+    "$0" refresh "$slug" ${source_args[@]+"${source_args[@]}"} || failed+=("$slug")
+  done
+  [[ ${#failed[@]} -eq 0 ]] || die "could not refresh: ${failed[*]}"
+}
+
+remove_instance() {
+  require_macos
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "remove requires a NAME"
+  shift || true
+  local delete_data="false" yes="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --delete-data) delete_data="true"; shift ;;
+      --yes) yes="true"; shift ;;
+      *) die "unknown remove option: $1" ;;
+    esac
+  done
+  local slug app answer profile shortcut
+  slug="$(slugify "$name")"
+  app="$(app_for_slug "$slug" || true)"
+  [[ -n "$app" ]] || die "disguise '$name' does not exist"
+  shortcut="$(shortcut_for_app "$app" "$slug")"
+  lock_slug "$(dirname "$app")" "$slug"
+  trap unlock_slug EXIT
+  assert_stopped "$app"
+  assert_shortcut_owned "$slug" "$shortcut"
+  profile="$(profile_for_app "$app" "$slug")"
+  # Checked before the prompt and before anything is deleted, so a settings folder we do not
+  # own cannot cost the user their app bundle on the way to the refusal.
+  [[ "$delete_data" != "true" ]] || assert_profile_ours "$profile" "$slug" delete
+  if [[ "$yes" != "true" ]]; then
+    if [[ "$delete_data" == true ]]; then
+      printf "Remove '%s' AND permanently delete its settings at '%s' and its Keychain item? [y/N] " "$(name_for_app "$app")" "$profile"
+    else
+      printf "Remove '%s'? Its settings will be kept. [y/N] " "$(name_for_app "$app")"
+    fi
+    read -r answer || answer=""
+    [[ "$answer" == "y" || "$answer" == "Y" ]] || { note "Cancelled."; return; }
+  fi
+  # Rechecked after the prompt: the confirmation window can be long.
+  assert_stopped "$app"
+  assert_shortcut_owned "$slug" "$shortcut"
+  [[ "$delete_data" != "true" ]] || assert_profile_ours "$profile" "$slug" delete
+  rm -rf -- "$app"
+  rm -f -- "$BIN_ROOT/$shortcut"
+  if [[ "$delete_data" == "true" ]]; then
+    rm -rf -- "$profile"
+    delete_keychain_item "$slug"
+    note "Removed the app and its settings."
+  else
+    note "Removed the app. Settings remain at: $profile"
+  fi
+}
+
+doctor() {
+  local has_errors="false" kind found="false"
+  if [[ "$(uname -s)" == "Darwin" ]]; then note "OK  macOS"; else note "ERR macOS is required"; has_errors="true"; fi
+  for kind in $ALL_KINDS; do
+    [[ "$kind" != generic ]] || continue
+    if (load_kind "$kind"
+        source="$(default_source_app 2>/dev/null)" || exit 1
+        if (verify_source_app "$source" false "$KIND_TEAM_ID") >/dev/null 2>&1; then
+          note "OK  $KIND_LABEL: $source"
+        else
+          note "WARN $KIND_LABEL: $source (not signed as expected; needs --trust-source)"
+        fi); then
+      found="true"
+    fi
+  done
+  if [[ "$found" == "false" ]]; then note "ERR none of the supported apps were found (run 'code-o-ween apps')"; has_errors="true"; fi
+  if [[ -d "$ICON_DIR" ]]; then note "OK  icons: $ICON_DIR"; else note "ERR icons missing: $ICON_DIR"; has_errors="true"; fi
+  if command -v codesign >/dev/null; then note "OK  codesign"; else note "ERR codesign is unavailable"; has_errors="true"; fi
+  if [[ -x /usr/bin/osascript && -x /usr/bin/iconutil && -x /usr/bin/sips ]]; then note "OK  custom icon tools"; else note "ERR custom icon tools are unavailable"; has_errors="true"; fi
+  if [[ ":$PATH:" == *":$BIN_ROOT:"* ]]; then note "OK  $BIN_ROOT is on PATH"; else note "WARN add $BIN_ROOT to PATH for the terminal shortcuts"; fi
+  [[ "$has_errors" == "false" ]]
+}
+
+open_manager() {
+  require_macos
+  local manager="${CODE_O_WEEN_MANAGER_APP:-$HOME/Applications/Code-o-ween.app}"
+  [[ -d "$manager" ]] || die "manager UI is not installed; run build-ui.sh from the package"
+  /usr/bin/open "$manager"
+}
+
+# The test scripts source this file to call its functions directly, so dispatch only when it
+# is run as a program.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+command="${1:-help}"
+shift || true
+case "$command" in
+  create) create_instance "$@" ;;
+  update) update_instance "$@" ;;
+  open) open_instance "$@" ;;
+  list) list_instances ;;
+  apps) list_kinds "$@" ;;
+  colors) color_names ;;
+  refresh) refresh_instances "$@" ;;
+  remove) remove_instance "$@" ;;
+  gui) open_manager ;;
+  doctor) doctor ;;
+  version|--version|-v) printf 'Code-o-ween %s\n' "$VERSION" ;;
+  help|--help|-h) usage ;;
+  *) usage >&2; die "unknown command: $command" ;;
+esac

@@ -1,0 +1,7 @@
+shell=bash
+# Lets `shellcheck -x tests/*.sh` follow `source "$(dirname "$0")/lib.sh"`.
+source-path=SCRIPTDIR
+# SC2016: the CLI writes launcher and shortcut scripts from single-quoted lines whose $variables
+# belong to the generated script. SC2030/SC2031: doctor and the tests scope recipe state in
+# subshells on purpose.
+disable=SC2016,SC2030,SC2031
