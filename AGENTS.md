@@ -135,10 +135,9 @@ CODE_O_WEEN_MANAGER_APP=/tmp/cow/Code-o-ween.app ./build-ui.sh
   only place that reasoning lives.
 - Releasing: bump `VERSION` in `code-o-ween` (the build scripts read it from there), bump
   `CFBundleVersion` in `build-ui.sh`, add a `CHANGELOG.md` entry, build and notarize the image
-  (see the README), create the release from it with `gh release create vX.Y.Z dist/...`, and
-  point the download button in `docs/index.html` at the new tag and file name (the page fetches
-  the newest release at runtime, but the markup is the fallback). A published image is never
-  replaced; a fix is a new tag.
+  (see the README), and create the release from it with `gh release create vX.Y.Z dist/...`.
+  The website links to the Releases page, not to a file, so it needs no change. A published
+  image is never replaced; a fix is a new tag.
 - There is no compatibility code for the layouts of unreleased prototypes (a `VS Code Instances`
   folder, `vscode-instance.*` metadata, unmarked settings folders, `VSCODE_INSTANCES_*`
   names). Do not add fallbacks for them.

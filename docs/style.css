@@ -147,6 +147,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 @media (max-width: 720px) { .sticky { display: none; } }
 
 /* ─────────────── Windows ─────────────── */
+/* Windows live in the band between the menu bar and the Dock, so no window's bottom edge sits under the Dock. */
 .windows { position: absolute; inset: var(--menubar-h) 0 var(--dock-h) 0; }
 
 .window {
@@ -212,8 +213,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   @keyframes open-mobile { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
 }
 
-/* While the browser is on screen, the page it shows scrolls with the document (html.page-scroll):
-   the window grows to fit its content, and its chrome sticks under the menu bar. */
+/* Without script (html.page-scroll, set in the markup and removed by script.js) the page scrolls with the
+   document: the browser window grows to fit its content, and its chrome sticks under the menu bar. With
+   script the browser is a regular window and its page scrolls inside it, clear of the Dock. */
 html.page-scroll, html.page-scroll body { height: auto; }
 html.page-scroll body { overflow: visible; overflow-x: hidden; }
 html.page-scroll .desktop { position: relative; min-height: 100vh; overflow: visible; background-attachment: fixed; }
@@ -450,6 +452,13 @@ html.page-scroll .window.browser.maximized .browser-chrome { border-radius: 0; }
 .browser-tabs .tab { flex: 1; padding: 7px 12px; text-align: center; color: var(--chrome-muted); border-right: 1px solid rgba(0, 0, 0, 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .browser-tabs .tab.active { background: var(--chrome); color: var(--chrome-text); }
 @media (max-width: 720px) { .browser-tabs .tab:not(.active) { display: none; } }
+/* The status bar at the foot of the window. */
+.browser-status { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; height: 26px; padding: 0 12px; background: var(--chrome); color: var(--chrome-muted); border-top: 1px solid rgba(0, 0, 0, 0.5); font-size: 12px; white-space: nowrap; }
+.browser-status .status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.browser-status .status-text.link { color: var(--chrome-text); }
+.browser-status .status-right { display: flex; gap: 14px; flex: none; }
+.browser-status .status-right span { cursor: help; }
+@media (max-width: 720px) { .browser-status .status-right { display: none; } }
 
 /* ─────────────── The web page inside the browser ─────────────── */
 .web {
@@ -471,14 +480,15 @@ html.page-scroll .window.browser.maximized .browser-chrome { border-radius: 0; }
 .web-hero, .web main, .web-footer { width: min(var(--max), 100% - 32px); margin: 0 auto; }
 .web-hero { text-align: center; padding: 48px 0 28px; }
 .eyebrow { margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.74rem; }
+.hero-icon { display: block; width: clamp(240px, 54vw, 384px); height: auto; margin: 32px auto 40px; border-radius: 22%; filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.55)); }
 .web h1 {
-  margin: 0; font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1.05; letter-spacing: -0.02em;
+  margin: 0; font-size: clamp(1.7rem, 4.5vw, 2.5rem); line-height: 1.1; letter-spacing: -0.02em;
   background: linear-gradient(90deg, var(--orange), var(--orange-2), var(--purple));
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .web h1 span { color: initial; -webkit-text-fill-color: initial; }
 .tagline { margin: 10px auto 24px; max-width: 34ch; font-size: clamp(1rem, 2.4vw, 1.25rem); color: var(--muted); }
-.warning { margin: 0 auto 24px; max-width: 520px; padding: 14px 18px; border-radius: var(--radius); background: rgba(255, 140, 26, 0.12); border: 1px solid rgba(255, 140, 26, 0.45); color: #ffe3c2; }
+.warning { margin: 24px auto 0; max-width: 520px; padding: 14px 18px; border-radius: var(--radius); background: rgba(255, 140, 26, 0.12); border: 1px solid rgba(255, 140, 26, 0.45); color: #ffe3c2; }
 .warning strong { color: var(--orange-2); }
 .verdict { display: block; margin-top: 8px; font-size: 0.92rem; color: var(--muted); min-height: 1.4em; }
 .actions { display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }
