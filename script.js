@@ -157,21 +157,19 @@
     menubarApp.textContent = win.dataset.title;
   };
 
-  // Windows don't move: each one sits centered on the desktop, re-centered every time it opens.
-  const placeWindow = (win, width, height) => {
+  // Windows don't move: each one sits centered on the desktop, re-centered every time it opens and
+  // whenever the screen changes size. A height of "fill" means as tall as the desktop allows, so the
+  // browser follows the screen instead of showing a fixed strip of its page.
+  const placeWindow = (win) => {
     const area = windowsLayer.getBoundingClientRect();
+    const width = Number(win.dataset.width) || 760;
+    const height = win.dataset.height === "fill" ? Infinity : Number(win.dataset.height) || 500;
     const w = Math.min(width, area.width - 24);
     const h = Math.min(height, area.height - 24);
     win.style.width = `${w}px`;
     win.style.height = `${h}px`;
     win.style.left = `${Math.max(12, (area.width - w) / 2)}px`;
     win.style.top = `${Math.max(12, (area.height - h) / 2)}px`;
-  };
-
-  // While the browser is the window on screen, its page scrolls with the document instead of inside a box.
-  const syncPageScroll = () => {
-    const browserWin = $(".window.browser", windowsLayer);
-    document.documentElement.classList.toggle("page-scroll", !!browserWin && !browserWin.hidden);
   };
 
   // One window at a time: the others step aside, still running, like apps hidden with ⌘H.
@@ -195,12 +193,9 @@
   const showWindow = (win) => {
     const app = win.dataset.app;
     hideOthers(win);
-    // Switch layouts before measuring, so a window opened from the scrolled browser is sized for the desktop.
-    document.documentElement.classList.toggle("page-scroll", win.classList.contains("browser"));
     if (win.hidden) {
-      if (!win.classList.contains("maximized")) placeWindow(win, Number(win.dataset.width) || 760, Number(win.dataset.height) || 500);
+      if (!win.classList.contains("maximized")) placeWindow(win);
       win.hidden = false;
-      window.scrollTo(0, 0);
       win.dataset.minimized = "false";
       win.classList.remove("minimizing");
       if (!reducedMotion) {
@@ -217,7 +212,6 @@
     win.dataset.minimized = "false";
     win.classList.remove("focused", "maximized");
     updateRunning(win.dataset.app);
-    syncPageScroll();
     menubarApp.textContent = "Haunter";
   };
 
@@ -227,7 +221,6 @@
       win.classList.remove("minimizing", "focused");
       win.dataset.minimized = "true";
       updateRunning(win.dataset.app);
-      syncPageScroll();
       menubarApp.textContent = "Haunter";
     };
     if (reducedMotion) return finish();
@@ -391,6 +384,7 @@
   const addDisguiseToDock = (d) => { dockSepApps.before(buildDockItem(d)); fitDock(); };
   DISGUISES.forEach(addDisguiseToDock);
   window.addEventListener("resize", fitDock);
+  window.addEventListener("resize", () => $$(".window:not([hidden]):not(.maximized)", windowsLayer).forEach(placeWindow));
   $$(".dock-item:not([data-app^='disguise:'])").forEach((item) => item.addEventListener("click", () => launch(item)));
 
   // Magnification: every icon grows by how close the pointer is to its center. Hover devices only.
@@ -585,8 +579,43 @@
     "You scrolled this far. The answer is still no, but with affection.",
   ];
   let step = 0;
+  // The status bar: a hovered link shows where it goes, as browsers once did; otherwise the text
+  // tracks how far down the page the reader has come.
+  const statusText = $("#status-text");
+  const web = $("#web");
+  const progressLines = [
+    [0.02, "Done. Nothing was installed. Yet."],
+    [0.3, "Reading. The scroll bar is a slow descent."],
+    [0.6, "Halfway. Profiles are still built in."],
+    [0.92, "Nearly through. The Dock has noticed."],
+    [Infinity, "The bottom. Still nothing installed. Well done."],
+  ];
+  let hoveredLink = null;
+  const updateStatus = () => {
+    if (hoveredLink) {
+      const target = hoveredLink.getAttribute("href");
+      statusText.textContent = target.startsWith("#") ? `Jump to ${target}` : hoveredLink.href;
+      statusText.classList.add("link");
+      return;
+    }
+    const room = web.scrollHeight - web.clientHeight;
+    const fraction = room > 0 ? web.scrollTop / room : 1;
+    statusText.textContent = progressLines.find(([limit]) => fraction < limit)[1];
+    statusText.classList.remove("link");
+  };
+  web.addEventListener("scroll", updateStatus, { passive: true });
+  web.addEventListener("mouseover", (event) => { const a = event.target.closest("a[href]"); if (a) { hoveredLink = a; updateStatus(); } });
+  web.addEventListener("mouseout", (event) => { if (hoveredLink && !hoveredLink.contains(event.relatedTarget)) { hoveredLink = null; updateStatus(); } });
+
   const verdict = $("#verdict");
-  $("#ask").addEventListener("click", () => { verdict.textContent = answers[step % answers.length]; step += 1; });
+  const warning = $("#warning");
+  const ask = $("#ask");
+  ask.addEventListener("click", () => {
+    warning.hidden = false;
+    ask.setAttribute("aria-expanded", "true");
+    verdict.textContent = answers[step % answers.length];
+    step += 1;
+  });
   $$("[data-open]").forEach((button) => button.addEventListener("click", () => launch(dockItemFor(button.dataset.open))));
 
   // ───────────────────────────── Odds and ends ─────────────────────────────
@@ -614,30 +643,15 @@
   // Lights on: the browser shows the page, like a Mac that logged in with Safari still open.
   const browser = $(".window.browser");
   browser.dataset.width = "880";
-  browser.dataset.height = "640";
+  browser.dataset.height = "fill";
   $(".window.manager").dataset.width = "600";
   $(".window.manager").dataset.height = "660";
   $(".window.finder").dataset.width = "680";
   $(".window.finder").dataset.height = "420";
-  // The markup ships the browser open so the page reads without script; hide it to open it properly.
+  // The markup ships the browser open and the page scrolling with the document (html.page-scroll), so it
+  // reads without script. With script the browser is a window like the others: it stays in the band between
+  // menu bar and Dock and its page scrolls inside it.
+  document.documentElement.classList.remove("page-scroll");
   browser.hidden = true;
   showWindow(browser);
-
-  // The download button links to a fixed release in the markup, which keeps working without
-  // script or network. When GitHub answers, it is pointed at the newest release's disk image.
-  // The repository is read from that link, so the page carries its address in one place.
-  const download = $("#download");
-  const downloadMeta = $("#download-meta");
-  if (download && "fetch" in window) {
-    const [owner, repo] = new URL(download.href).pathname.split("/").slice(1, 3);
-    fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.statusText))))
-      .then((release) => {
-        const asset = (release.assets || []).find((item) => item.name.endsWith(".dmg"));
-        if (!asset) return;
-        download.href = asset.browser_download_url;
-        if (downloadMeta) downloadMeta.textContent = `${release.tag_name} · ${(asset.size / 1048576).toFixed(1)} MB`;
-      })
-      .catch(() => {});
-  }
 })();
